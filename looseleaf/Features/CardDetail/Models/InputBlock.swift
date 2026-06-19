@@ -64,6 +64,10 @@ struct InputBlock: Identifiable {
     var duration: String = ""
     var expenses: [ExpenseRow] = []
 
+    // Voice-note metadata.
+    var transcript: String = ""
+    var createdAt: String = ""
+
     var expensesTotal: Int {
         expenses.reduce(0) { $0 + $1.amount }
     }

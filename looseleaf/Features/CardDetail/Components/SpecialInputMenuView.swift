@@ -5,9 +5,8 @@ struct SpecialInputMenuView: View {
     @Binding var selectedType: InputBlockType
     var onSelect: (InputBlockType) -> Void
 
-    // Ordered as requested: special types first, Default last.
     private let order: [InputBlockType] = [
-        .vocabulary, .quote, .voiceNote, .image, .text, .expenses, .default
+        .vocabulary, .quote, .expenses
     ]
 
     var body: some View {

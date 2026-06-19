@@ -11,6 +11,8 @@ struct CardDetailView: View {
     @State private var selectedBlockID: UUID?
     @State private var activeSheet: ActiveSheet?
     @State private var showSpecialMenu = false
+    @State private var showAttachmentMenu = false
+    @State private var voiceNoteSession: VoiceNoteSession?
     @State private var imageContextMenuBlockID: UUID?
     @State private var selectedType: InputBlockType = .default
     @State private var undoStack: [PageState] = []
@@ -54,11 +56,11 @@ struct CardDetailView: View {
                 )
             }
 
-            // Tap-to-dismiss layer for the special input menu.
-            if showSpecialMenu {
+            // Tap-to-dismiss layer for the floating menus.
+            if showSpecialMenu || showAttachmentMenu {
                 Color.black.opacity(0.001)
                     .ignoresSafeArea()
-                    .onTapGesture { closeSpecialMenu() }
+                    .onTapGesture { closeMenus() }
             }
 
             bottomArea
@@ -66,6 +68,12 @@ struct CardDetailView: View {
         .toolbar(.hidden, for: .navigationBar)
         .sheet(item: $activeSheet, onDismiss: { selectedBlockID = nil }) { sheet in
             editorSheet(for: sheet)
+        }
+        .fullScreenCover(item: $voiceNoteSession, onDismiss: { selectedBlockID = nil }) { session in
+            VoiceNoteInputView(
+                onCancel: { voiceNoteSession = nil },
+                onSave: { saveVoiceNote(session) }
+            )
         }
         .onChange(of: imageContextMenuBlockID) { _, newValue in
             if newValue == nil, activeSheet == nil { selectedBlockID = nil }
@@ -83,11 +91,27 @@ struct CardDetailView: View {
                 .transition(.scale(scale: 0.9, anchor: .bottom).combined(with: .opacity))
             }
 
+            if showAttachmentMenu {
+                AttachmentMenuView(
+                    onTakePhoto: { insertImage() },
+                    onChoosePhoto: { insertImage() },
+                    onRecordAudio: { recordAudio() },
+                    onCancel: { closeMenus() }
+                )
+                .transition(.scale(scale: 0.9, anchor: .bottom).combined(with: .opacity))
+            }
+
             BottomToolbarView(
                 onAppearance: {},
-                onAttachment: { handleSpecialSelection(.image) },
+                onAttachment: {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                        showSpecialMenu = false
+                        showAttachmentMenu.toggle()
+                    }
+                },
                 onSpecialInput: {
                     withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                        showAttachmentMenu = false
                         showSpecialMenu.toggle()
                     }
                 },
@@ -97,10 +121,41 @@ struct CardDetailView: View {
         .padding(.bottom, 8)
     }
 
+    // MARK: - Attachment actions
+
+    private func insertImage() {
+        closeMenus()
+        pushUndo()
+        blocks.append(InputBlock(type: .image, imageName: "View 1"))
+    }
+
+    private func recordAudio() {
+        closeMenus()
+        voiceNoteSession = VoiceNoteSession(blockID: nil)
+    }
+
+    private func saveVoiceNote(_ session: VoiceNoteSession) {
+        pushUndo()
+        if let id = session.blockID, let index = blocks.firstIndex(where: { $0.id == id }) {
+            // Edit mode — dummy screen has no editable fields, so content is
+            // preserved; the snapshot above still makes the action undoable.
+            blocks[index].createdAt = "Today, 09:41"
+        } else {
+            blocks.append(
+                InputBlock(type: .voiceNote,
+                           text: "Design Feedback",
+                           duration: "00:01",
+                           transcript: "Oke, kayaknya better kamu ubah komponen ini pake autolayout dulu...",
+                           createdAt: "Today, 09:41")
+            )
+        }
+        voiceNoteSession = nil
+    }
+
     // MARK: - Special input selection (create flows)
 
     private func handleSpecialSelection(_ type: InputBlockType) {
-        closeSpecialMenu()
+        closeMenus()
         selectedType = type
 
         switch type {
@@ -119,15 +174,23 @@ struct CardDetailView: View {
         }
     }
 
-    private func closeSpecialMenu() {
-        withAnimation(.easeOut(duration: 0.15)) { showSpecialMenu = false }
+    private func closeMenus() {
+        withAnimation(.easeOut(duration: 0.15)) {
+            showSpecialMenu = false
+            showAttachmentMenu = false
+        }
     }
 
     // MARK: - Editing existing special blocks
 
     private func beginEditing(_ block: InputBlock) {
         selectedBlockID = block.id
-        activeSheet = ActiveSheet(type: block.type, mode: .edit, blockID: block.id)
+        if block.type == .voiceNote {
+            // Voice notes open the dedicated full-screen editor.
+            voiceNoteSession = VoiceNoteSession(blockID: block.id)
+        } else {
+            activeSheet = ActiveSheet(type: block.type, mode: .edit, blockID: block.id)
+        }
     }
 
     // MARK: - Sheet builder
@@ -168,21 +231,6 @@ struct CardDetailView: View {
                     }
                 }
             )
-        case .voiceNote:
-            VoiceNoteEditorSheet(
-                title: "\(titlePrefix) Voice Note",
-                noteTitle: existing?.text ?? "Voice Note",
-                duration: existing?.duration ?? "",
-                onCancel: { activeSheet = nil },
-                onSave: { noteTitle, duration in
-                    commit(sheet) { block in
-                        block.text = noteTitle
-                        block.duration = duration
-                    } create: {
-                        InputBlock(type: .voiceNote, text: noteTitle, duration: duration)
-                    }
-                }
-            )
         case .expenses:
             ExpensesTableEditorSheet(
                 title: "\(titlePrefix) Expenses",
@@ -196,7 +244,7 @@ struct CardDetailView: View {
                     }
                 }
             )
-        case .default, .image, .text:
+        case .default, .image, .text, .voiceNote:
             EmptyView()
         }
     }
@@ -264,6 +312,12 @@ struct CardDetailView: View {
 }
 
 // MARK: - Supporting types
+
+/// Identifies a full-screen voice note session (create when `blockID` is nil).
+struct VoiceNoteSession: Identifiable {
+    let id = UUID()
+    var blockID: UUID?
+}
 
 /// Identifies which editor sheet is presented.
 struct ActiveSheet: Identifiable {
