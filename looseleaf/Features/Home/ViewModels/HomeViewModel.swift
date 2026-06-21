@@ -4,18 +4,39 @@ import SwiftUI
 class HomeViewModel {
     var entries: [JournalEntry] = []
     var selectedFilter: JournalLevel? = nil
+    var searchQuery: String = ""
 
-    var filteredEntries: [JournalEntry] {
-        guard let filter = selectedFilter else { return entries }
-        return entries.filter { $0.level == filter }
+    var isSearchActive: Bool {
+        !searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    var filteredEntries: [JournalEntry] {
+        var result = entries
+        if let filter = selectedFilter {
+            result = result.filter { $0.level == filter }
+        }
+        let query = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if !query.isEmpty {
+            result = result.filter { $0.matchesSearch(query) }
+        }
+        return result
+    }
+
+    /// The pinned card is the "today" entry — shown only when it passes the
+    /// active filter and no search is in progress.
     var featuredEntry: JournalEntry? {
-        filteredEntries.first
+        guard !isSearchActive else { return nil }
+        guard let pinned = entries.first(where: { $0.isToday }) else { return nil }
+        if let filter = selectedFilter, pinned.level != filter { return nil }
+        return pinned
     }
 
     var gridEntries: [JournalEntry] {
-        Array(filteredEntries.dropFirst())
+        filteredEntries.filter { $0.id != featuredEntry?.id }
+    }
+
+    var hasResults: Bool {
+        featuredEntry != nil || !gridEntries.isEmpty
     }
 
     var totalPages: Int {
@@ -24,6 +45,21 @@ class HomeViewModel {
 
     init() {
         entries = DummyJournal.makeEntries()
+    }
+
+    /// Creates a new, empty entry dated today and inserts it at the top.
+    @discardableResult
+    func createEntry() -> JournalEntry {
+        let entry = JournalEntry(
+            title: "New Note",
+            date: Date(),
+            level: nil,
+            caption: "",
+            imageName: nil,
+            pages: [JournalPage(title: "New Note", blocks: [])]
+        )
+        entries.insert(entry, at: 0)
+        return entry
     }
 }
 
@@ -56,14 +92,23 @@ enum DummyJournal {
                 ? "page-content_\(Int.random(in: 1...6, using: &rng))"
                 : nil
 
+            // Every card has 2–4 filled pages.
+            let entryTitle = titles[i]
+            let pageCount = Int.random(in: 2...4, using: &rng)
+            let pages: [JournalPage] = (0..<pageCount).map { p in
+                JournalPage(
+                    title: p == 0 ? entryTitle : pool.nextPageTitle(rng: &rng),
+                    blocks: pool.makeBlocks(rng: &rng, date: date)
+                )
+            }
+
             return JournalEntry(
-                title: titles[i],
+                title: entryTitle,
                 date: date,
                 level: i == 0 ? .reflective : levels[i % levels.count],
                 caption: captions[i],
-                pageCount: Int.random(in: 1...4, using: &rng),
                 imageName: backgroundImage,
-                blocks: pool.makeBlocks(rng: &rng)
+                pages: pages
             )
         }
     }
@@ -324,70 +369,107 @@ enum DummyJournal {
     ]
 
     static let imagePool: [String] = (1...6).map { "page-content_\($0)" }
+
+    /// Distinct titles for pages after the first (the first keeps the card title).
+    static let pageTitlePool: [String] = [
+        "Things I noticed", "A small list", "Notes to future me", "Half-formed ideas",
+        "Before I forget", "Quiet observations", "What stuck with me", "Loose threads",
+        "Scratch pad", "Between the lines", "Afterthoughts", "Today's leftovers",
+        "Random tangents", "On second thought", "The long version", "Footnotes",
+        "Side quests", "Later, maybe", "Bits and pieces", "A clearer head",
+        "The rundown", "Postscript", "Stray thoughts", "Second wind",
+        "Odds and ends", "More of this", "The quiet part", "Unsorted",
+        "Threads to pull", "Where my head went",
+    ]
 }
 
 // MARK: - Content dispenser
 
-/// Hands out content from shuffled pools without replacement, guaranteeing that
-/// no text/vocab/quote/voice/expense/image is ever reused across cards.
+/// Hands out content from shuffled pools. Items are unique until a pool is
+/// exhausted, then it reshuffles and refills — so the many filled pages never
+/// run out of content while keeping duplication spread far apart.
 private struct ContentDispenser {
-    private var texts: [String]
-    private var vocab: [(String, String, String)]
-    private var quotes: [(String, String)]
-    private var voices: [(String, String)]
-    private var expenses: [[(String, Int)]]
-    private var images: [String]
+    private var texts: Refillable<String>
+    private var vocab: Refillable<(String, String, String)>
+    private var quotes: Refillable<(String, String)>
+    private var voices: Refillable<(String, String)>
+    private var expenses: Refillable<[(String, Int)]>
+    private var images: Refillable<String>
+    private var pageTitles: Refillable<String>
 
     init(rng: inout SeededGenerator) {
-        texts = DummyJournal.textPool.shuffled(using: &rng)
-        vocab = DummyJournal.vocabPool.shuffled(using: &rng)
-        quotes = DummyJournal.quotePool.shuffled(using: &rng)
-        voices = DummyJournal.voicePool.shuffled(using: &rng)
-        expenses = DummyJournal.expensePool.shuffled(using: &rng)
-        images = DummyJournal.imagePool.shuffled(using: &rng)
+        texts = Refillable(DummyJournal.textPool, rng: &rng)
+        vocab = Refillable(DummyJournal.vocabPool, rng: &rng)
+        quotes = Refillable(DummyJournal.quotePool, rng: &rng)
+        voices = Refillable(DummyJournal.voicePool, rng: &rng)
+        expenses = Refillable(DummyJournal.expensePool, rng: &rng)
+        images = Refillable(DummyJournal.imagePool, rng: &rng)
+        pageTitles = Refillable(DummyJournal.pageTitlePool, rng: &rng)
+    }
+
+    /// A distinct title for a non-first page.
+    mutating func nextPageTitle(rng: inout SeededGenerator) -> String {
+        pageTitles.take(1, rng: &rng).first ?? "Untitled"
     }
 
     /// Builds one rich page with randomized quantities and a fully shuffled
     /// order. The page title is rendered separately, so it always stays first.
-    mutating func makeBlocks(rng: inout SeededGenerator) -> [InputBlock] {
+    mutating func makeBlocks(rng: inout SeededGenerator, date: Date) -> [InputBlock] {
         var blocks: [InputBlock] = []
 
-        for text in take(&texts, Int.random(in: 3...6, using: &rng)) {
+        // At least 3 text lines guarantees every page is filled.
+        for text in texts.take(Int.random(in: 3...6, using: &rng), rng: &rng) {
             blocks.append(InputBlock(type: .default, text: text))
         }
-        for v in take(&vocab, Int.random(in: 2...4, using: &rng)) {
+        for v in vocab.take(Int.random(in: 2...4, using: &rng), rng: &rng) {
             blocks.append(InputBlock(type: .vocabulary, text: "\(v.0) —",
                                      secondaryText: v.1, language: v.2))
         }
-        for q in take(&quotes, Int.random(in: 1...3, using: &rng)) {
+        for q in quotes.take(Int.random(in: 1...3, using: &rng), rng: &rng) {
             blocks.append(InputBlock(type: .quote, text: q.0, secondaryText: q.1))
         }
-        for v in take(&voices, Int.random(in: 0...3, using: &rng)) {
+        for v in voices.take(Int.random(in: 0...2, using: &rng), rng: &rng) {
+            let hour = Int.random(in: 7...22, using: &rng)
+            let minute = Int.random(in: 0...59, using: &rng)
             blocks.append(InputBlock(
                 type: .voiceNote,
                 text: v.0,
                 duration: String(format: "00:%02d", Int.random(in: 5...59, using: &rng)),
                 transcript: v.1,
-                createdAt: "Today, 09:41"
+                createdAt: DateStamp.string(date: date, hour: hour, minute: minute)
             ))
         }
-        for table in take(&expenses, Int.random(in: 0...2, using: &rng)) {
+        for table in expenses.take(Int.random(in: 0...1, using: &rng), rng: &rng) {
             blocks.append(InputBlock(type: .expenses,
                                      expenses: table.map { ExpenseRow(category: $0.0, amount: $0.1) }))
         }
-        for image in take(&images, Int.random(in: 0...1, using: &rng)) {
+        for image in images.take(Int.random(in: 0...1, using: &rng), rng: &rng) {
             blocks.append(InputBlock(type: .image, imageName: image))
         }
 
         blocks.shuffle(using: &rng)
         return blocks
     }
+}
 
-    /// Removes and returns up to `n` items from the front of `array`.
-    private func take<T>(_ array: inout [T], _ n: Int) -> [T] {
-        let count = min(max(n, 0), array.count)
-        defer { array.removeFirst(count) }
-        return Array(array.prefix(count))
+/// A shuffled queue that refills (reshuffles the full source) when emptied.
+private struct Refillable<Element> {
+    private let source: [Element]
+    private var queue: [Element]
+
+    init(_ source: [Element], rng: inout SeededGenerator) {
+        self.source = source
+        self.queue = source.shuffled(using: &rng)
+    }
+
+    mutating func take(_ n: Int, rng: inout SeededGenerator) -> [Element] {
+        guard !source.isEmpty else { return [] }
+        var out: [Element] = []
+        for _ in 0..<max(n, 0) {
+            if queue.isEmpty { queue = source.shuffled(using: &rng) }
+            out.append(queue.removeFirst())
+        }
+        return out
     }
 }
 

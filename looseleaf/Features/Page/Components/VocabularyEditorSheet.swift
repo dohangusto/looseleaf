@@ -48,8 +48,7 @@ struct VocabularyEditorSheet: View {
                     Button("Cancel", action: onCancel)
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") { onSave(word, meaning) }
-                        .fontWeight(.semibold)
+                    ConfirmButton { onSave(word, meaning) }
                 }
             }
         }

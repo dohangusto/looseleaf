@@ -11,21 +11,21 @@ struct FeaturedCardView: View {
     }
 
     var body: some View {
-        ZStack {
-            // Stacked pages behind the card, drawn back-to-front.
-            ForEach(Array((1...max(stackCount, 1)).reversed()), id: \.self) { level in
-                if level <= stackCount {
-                    RoundedRectangle(cornerRadius: cardRadius)
-                        .fill(.ultraThinMaterial)
-                        .shadow(color: .black.opacity(0.15), radius: 8, x: 0, y: 6)
-                        .rotationEffect(.degrees(Double(level) * 1.6), anchor: .bottom)
-                        .offset(y: CGFloat(level) * 9)
+        cardContent
+            // Stacked pages rendered as a background so they exactly match the
+            // card's real size and only peek out below it.
+            .background(alignment: .top) {
+                ForEach(Array((1...max(stackCount, 1)).reversed()), id: \.self) { level in
+                    if level <= stackCount {
+                        RoundedRectangle(cornerRadius: cardRadius)
+                            .fill(.ultraThinMaterial)
+                            .shadow(color: .black.opacity(0.12), radius: 6, x: 0, y: 4)
+                            .padding(.horizontal, CGFloat(level) * 8)
+                            .offset(y: CGFloat(level) * 10)
+                    }
                 }
             }
-
-            cardContent
-        }
-        .padding(.bottom, 32)
+            .padding(.bottom, stackCount > 0 ? CGFloat(stackCount) * 10 + 4 : 0)
     }
 
     private var cardContent: some View {

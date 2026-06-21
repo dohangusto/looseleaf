@@ -48,7 +48,7 @@ struct VoiceNoteInputView: View {
             HStack {
                 circleButton("xmark", tint: .primary, action: onCancel)
                 Spacer()
-                circleButton("checkmark", tint: .white, background: .blue) {
+                circleButton("checkmark", tint: .black, background: .citrine) {
                     onSave(title.trimmingCharacters(in: .whitespaces).isEmpty ? "Untitled" : title)
                 }
             }

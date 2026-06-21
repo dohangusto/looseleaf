@@ -49,8 +49,7 @@ struct QuoteEditorSheet: View {
                     Button("Cancel", action: onCancel)
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") { onSave(quote, context) }
-                        .fontWeight(.semibold)
+                    ConfirmButton { onSave(quote, context) }
                 }
             }
         }

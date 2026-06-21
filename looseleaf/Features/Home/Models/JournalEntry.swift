@@ -27,17 +27,26 @@ enum JournalLevel: String, CaseIterable, Identifiable {
     }
 }
 
+/// One filled page of a card (title + content blocks).
+struct JournalPage: Identifiable {
+    let id = UUID()
+    var title: String
+    var blocks: [InputBlock]
+}
+
 struct JournalEntry: Identifiable, Hashable {
     let id = UUID()
     let title: String
     let date: Date
     let level: JournalLevel?
     let caption: String
-    let pageCount: Int
     /// HomeView card background image (`nil` renders a text card).
     let imageName: String?
-    /// Rich page content shown in the detail (Page) screen.
-    let blocks: [InputBlock]
+    /// Rich, filled pages shown in the detail (Page) screen — always 2+.
+    let pages: [JournalPage]
+
+    /// Number of pages (drives the stacked-card visual on the Home grid).
+    var pageCount: Int { pages.count }
 
     var isToday: Bool {
         Calendar.current.isDateInToday(date)
@@ -62,6 +71,17 @@ struct JournalEntry: Identifiable, Hashable {
         return formatter.string(from: date)
     }
 
+    /// True if the query matches the title, caption, date, or any page content.
+    func matchesSearch(_ query: String) -> Bool {
+        if title.lowercased().contains(query) { return true }
+        if caption.lowercased().contains(query) { return true }
+        if formattedDate.lowercased().contains(query) { return true }
+        return pages.contains { page in
+            page.title.lowercased().contains(query)
+                || page.blocks.contains { $0.searchableText.contains(query) }
+        }
+    }
+
     // Identity is the stable id — blocks are excluded from Hashable/Equatable
     // (InputBlock isn't Hashable, and id uniqueness is sufficient for routing).
     static func == (lhs: JournalEntry, rhs: JournalEntry) -> Bool {
@@ -80,18 +100,22 @@ extension JournalEntry {
         date: Date(),
         level: .reflective,
         caption: "A crisp, slow morning with clearer thoughts than usual.",
-        pageCount: 2,
         imageName: "page-content_1",
-        blocks: [
-            InputBlock(type: .default, text: "Woke up early and let the morning be slow for once."),
-            InputBlock(type: .image, imageName: "page-content_1"),
-            InputBlock(type: .vocabulary, text: "Komorebi —",
-                       secondaryText: "sunlight filtering through trees"),
-            InputBlock(type: .quote, text: "Mulai dari dirimu sendiri.",
-                       secondaryText: "Tidak ada yang berubah kalau tidak ada yang bergerak"),
-            InputBlock(type: .expenses, expenses: [
-                ExpenseRow(category: "kopi", amount: 24000),
-                ExpenseRow(category: "roti", amount: 15000),
+        pages: [
+            JournalPage(title: "Morning in Kyoto", blocks: [
+                InputBlock(type: .default, text: "Woke up early and let the morning be slow for once."),
+                InputBlock(type: .image, imageName: "page-content_1"),
+                InputBlock(type: .vocabulary, text: "Komorebi —",
+                           secondaryText: "sunlight filtering through trees", language: "English"),
+                InputBlock(type: .quote, text: "Mulai dari dirimu sendiri.",
+                           secondaryText: "Tidak ada yang berubah kalau tidak ada yang bergerak"),
+            ]),
+            JournalPage(title: "Morning in Kyoto — Part 2", blocks: [
+                InputBlock(type: .default, text: "Later I jotted down a few expenses from the cafe."),
+                InputBlock(type: .expenses, expenses: [
+                    ExpenseRow(category: "kopi", amount: 24000),
+                    ExpenseRow(category: "roti", amount: 15000),
+                ]),
             ]),
         ]
     )

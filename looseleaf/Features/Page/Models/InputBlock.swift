@@ -17,6 +17,17 @@ enum InputBlockType: String, CaseIterable, Identifiable {
     /// selection depth, and editing sheets.
     var isSpecial: Bool { self != .default }
 
+    /// Types the user can filter by in "Show by Type". Plain free-writing
+    /// (`.default`) is not listed separately — it belongs to the `.text` category.
+    static var selectableTypes: [InputBlockType] {
+        [.text, .vocabulary, .quote, .voiceNote, .image, .expenses]
+    }
+
+    /// The filter category a block belongs to (`.default` counts as `.text`).
+    var filterCategory: InputBlockType {
+        self == .default ? .text : self
+    }
+
     var label: String {
         switch self {
         case .default: return "Default"
@@ -72,6 +83,19 @@ struct InputBlock: Identifiable {
 
     var expensesTotal: Int {
         expenses.reduce(0) { $0 + $1.amount }
+    }
+
+    /// All searchable text in this block, lowercased — used by "Find in Note".
+    var searchableText: String {
+        var parts = [text, secondaryText, transcript, language]
+        parts += expenses.map { "\($0.category) \($0.amount)" }
+        return parts.joined(separator: " ").lowercased()
+    }
+
+    func matches(_ query: String) -> Bool {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !q.isEmpty else { return false }
+        return searchableText.contains(q)
     }
 }
 

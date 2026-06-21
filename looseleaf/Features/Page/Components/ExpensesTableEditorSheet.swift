@@ -95,11 +95,10 @@ struct ExpensesTableEditorSheet: View {
                     Button("Cancel", action: onCancel)
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") {
+                    ConfirmButton {
                         // Drop fully-empty rows on save.
                         onSave(rows.filter { !($0.category.isEmpty && $0.amount == 0) })
                     }
-                    .fontWeight(.semibold)
                 }
             }
         }

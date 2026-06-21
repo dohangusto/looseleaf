@@ -11,6 +11,13 @@ struct EditablePageCanvasView: View {
     var selectedBlockID: UUID?
     @Binding var imageContextMenuBlockID: UUID?
 
+    /// When false (locked / read view) the page is non-editable.
+    var isEditable: Bool = true
+    /// Only blocks of these types are shown ("Show by Type").
+    var visibleTypes: Set<InputBlockType> = Set(InputBlockType.allCases)
+    /// The block currently highlighted/scrolled-to by "Find in Note".
+    var currentMatchID: UUID? = nil
+
     /// Called when a text field (title or plain text) gains focus, so the host
     /// can snapshot state for undo before edits begin.
     var onBeginTextEdit: () -> Void = {}
@@ -29,39 +36,60 @@ struct EditablePageCanvasView: View {
     @Environment(\.cardVisuals) private var visuals
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                // Title — always the first row and the strongest element.
-                TextField("Title", text: $title, axis: .vertical)
-                    .font(.system(size: visuals.size(34), weight: .bold))
-                    .foregroundStyle(visuals.primaryText)
-                    .textInputAutocapitalization(.sentences)
-                    .focused($focusedField, equals: .title)
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    // Title — always the first row and the strongest element.
+                    TextField("Title", text: $title, axis: .vertical)
+                        .font(.system(size: visuals.size(34), weight: .bold))
+                        .foregroundStyle(visuals.primaryText)
+                        .textInputAutocapitalization(.sentences)
+                        .focused($focusedField, equals: .title)
+                        .disabled(!isEditable)
 
-                ForEach($blocks) { $block in
-                    blockView(for: $block)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    ForEach($blocks) { $block in
+                        row(for: $block)
+                    }
+
+                    // Tap-to-continue region below the last block.
+                    Color.clear
+                        .frame(minHeight: 160)
+                        .contentShape(Rectangle())
+                        .onTapGesture { if isEditable { focusTrailingWritingBlock() } }
                 }
-
-                // Tap-to-continue region below the last block.
-                Color.clear
-                    .frame(minHeight: 160)
-                    .contentShape(Rectangle())
-                    .onTapGesture { focusTrailingWritingBlock() }
+                .padding(.horizontal, 20)
+                .padding(.top, 8)
+                .padding(.bottom, 140)
             }
-            .padding(.horizontal, 20)
-            .padding(.top, 8)
-            .padding(.bottom, 140)
-        }
-        .scrollDismissesKeyboard(.interactively)
-        .contentShape(Rectangle())
-        .onTapGesture { focusTrailingWritingBlock() }
-        .onChange(of: focusedField) { _, newValue in
-            if newValue != nil { onBeginTextEdit() }
+            .scrollDismissesKeyboard(.interactively)
+            .contentShape(Rectangle())
+            .onTapGesture { if isEditable { focusTrailingWritingBlock() } }
+            .onChange(of: focusedField) { _, newValue in
+                if newValue != nil { onBeginTextEdit() }
+            }
+            .onChange(of: currentMatchID) { _, id in
+                guard let id else { return }
+                withAnimation(.easeInOut) { proxy.scrollTo(id, anchor: .center) }
+            }
         }
     }
 
     // MARK: - Block rendering
+
+    @ViewBuilder
+    private func row(for block: Binding<InputBlock>) -> some View {
+        let value = block.wrappedValue
+        if visibleTypes.contains(value.type.filterCategory) {
+            blockView(for: block)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(currentMatchID == value.id ? 6 : 0)
+                .background(
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(currentMatchID == value.id ? Color.yellow.opacity(0.30) : Color.clear)
+                )
+                .id(value.id)
+        }
+    }
 
     @ViewBuilder
     private func blockView(for block: Binding<InputBlock>) -> some View {
@@ -74,32 +102,33 @@ struct EditablePageCanvasView: View {
                               weight: value.type == .text ? .medium : .regular))
                 .foregroundStyle(visuals.primaryText)
                 .focused($focusedField, equals: .block(value.id))
+                .disabled(!isEditable)
 
         case .vocabulary:
             VocabularyBlockView(block: value)
                 .selectedBlock(selectedBlockID == value.id)
-                .onTapGesture { onTapSpecialBlock(value) }
+                .onTapGesture { if isEditable { onTapSpecialBlock(value) } }
 
         case .quote:
             QuoteBlockView(block: value)
                 .selectedBlock(selectedBlockID == value.id)
                 .contentShape(Rectangle())
-                .onTapGesture { onTapSpecialBlock(value) }
+                .onTapGesture { if isEditable { onTapSpecialBlock(value) } }
 
         case .voiceNote:
             VoiceNoteBlockView(block: value)
                 .selectedBlock(selectedBlockID == value.id)
-                .onTapGesture { onTapSpecialBlock(value) }
+                .onTapGesture { if isEditable { onTapSpecialBlock(value) } }
 
         case .expenses:
             ExpensesTableBlockView(block: value)
                 .selectedBlock(selectedBlockID == value.id)
-                .onTapGesture { onTapSpecialBlock(value) }
+                .onTapGesture { if isEditable { onTapSpecialBlock(value) } }
 
         case .image:
             ImageBlockView(block: value)
                 .selectedBlock(selectedBlockID == value.id)
-                .onLongPressGesture { onImageLongPress(value.id) }
+                .onLongPressGesture { if isEditable { onImageLongPress(value.id) } }
                 .popover(isPresented: imageMenuBinding(for: value.id)) {
                     ImageContextMenuView(
                         onDelete: { onDeleteImage(value.id) },

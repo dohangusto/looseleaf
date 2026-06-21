@@ -9,7 +9,7 @@ struct BottomToolbarView: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            // Main actions grouped in one capsule.
+            // Main actions grouped in one capsule (anchored to the left).
             HStack(spacing: 28) {
                 toolbarButton("slider.horizontal.3", action: onAppearance)
                 toolbarButton("paperclip", action: onAttachment)
@@ -21,7 +21,9 @@ struct BottomToolbarView: View {
             .overlay(Capsule().strokeBorder(Color(.separator).opacity(0.4), lineWidth: 0.5))
             .shadow(color: .black.opacity(0.12), radius: 16, x: 0, y: 8)
 
-            // New-page button stands on its own beside the main capsule.
+            Spacer(minLength: 12)
+
+            // New-page button anchored to the right.
             Button(action: onNewPage) {
                 Image(systemName: "plus")
                     .font(.system(size: 18, weight: .semibold))
@@ -33,6 +35,7 @@ struct BottomToolbarView: View {
             }
             .buttonStyle(.plain)
         }
+        .padding(.horizontal, 20)
     }
 
     private func toolbarButton(_ systemName: String, action: @escaping () -> Void) -> some View {

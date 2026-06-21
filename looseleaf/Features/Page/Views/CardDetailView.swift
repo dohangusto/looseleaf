@@ -9,13 +9,15 @@ struct CardDetailView: View {
 
     init(entry: JournalEntry) {
         self.entry = entry
-        _pageTitle = State(initialValue: entry.title)
-        _blocks = State(initialValue: entry.blocks)
+        // Each card already carries 2+ filled pages.
+        _pages = State(initialValue: entry.pages.map {
+            NotePage(title: $0.title, blocks: $0.blocks)
+        })
     }
 
     // MARK: State
-    @State private var pageTitle: String
-    @State private var blocks: [InputBlock]
+    @State private var pages: [NotePage]
+    @State private var currentPageIndex = 0
     @State private var selectedBlockID: UUID?
     @State private var activeSheet: ActiveSheet?
     @State private var showSpecialMenu = false
@@ -33,10 +35,56 @@ struct CardDetailView: View {
     @State private var fontScale: CGFloat = 1.0
     @State private var contrastScale: CGFloat = 1.0
 
+    // More actions
+    @State private var showFindBar = false
+    @State private var findQuery = ""
+    @State private var matchIndex = 0
+    @State private var visibleTypes: Set<InputBlockType> = Set(InputBlockType.selectableTypes)
+    @State private var showTypeFilter = false
+    @State private var layoutMode: PageLayoutMode = .standard
+    @State private var pdfURL: URL?
+    @State private var showShareSheet = false
+
     private var date: String { entry.detailDate }
-    private var pageIndicator: String { "1 of \(entry.pageCount)" }
+    private var pageIndicator: String { "\(currentPageIndex + 1) of \(pages.count)" }
 
     private var canUndo: Bool { !undoStack.isEmpty }
+
+    // MARK: - Current page proxies
+
+    /// Editable title of the current page.
+    private var pageTitle: Binding<String> { $pages[currentPageIndex].title }
+    /// Editable blocks of the current page.
+    private var blocksBinding: Binding<[InputBlock]> { $pages[currentPageIndex].blocks }
+    /// Convenience read/write accessor used by the action helpers.
+    private var blocks: [InputBlock] {
+        get { pages[currentPageIndex].blocks }
+        nonmutating set { pages[currentPageIndex].blocks = newValue }
+    }
+    private var currentTitle: String {
+        get { pages[currentPageIndex].title }
+        nonmutating set { pages[currentPageIndex].title = newValue }
+    }
+    private var isLocked: Bool {
+        get { pages[currentPageIndex].isLocked }
+        nonmutating set { pages[currentPageIndex].isLocked = newValue }
+    }
+
+    /// Editing is disabled while locked or in Read View.
+    private var isEditable: Bool { !isLocked && layoutMode != .readView }
+
+    private var canGoPreviousPage: Bool { currentPageIndex > 0 }
+    private var canGoNextPage: Bool { currentPageIndex < pages.count - 1 }
+
+    /// Blocks matching the current find query, in page order.
+    private var matchIDs: [UUID] {
+        guard showFindBar else { return [] }
+        return blocks.filter { $0.matches(findQuery) }.map(\.id)
+    }
+
+    private var currentMatchID: UUID? {
+        matchIDs.indices.contains(matchIndex) ? matchIDs[matchIndex] : nil
+    }
 
     private var visuals: CardDetailVisualSettings {
         CardDetailVisualSettings(
@@ -56,16 +104,35 @@ struct CardDetailView: View {
                     date: date,
                     pageIndicator: pageIndicator,
                     isUndoEnabled: canUndo,
+                    canGoPrevious: canGoPreviousPage,
+                    canGoNext: canGoNextPage,
                     onBack: { dismiss() },
                     onUndo: undo,
-                    onMore: {}
+                    onPreviousPage: { goToPage(currentPageIndex - 1) },
+                    onNextPage: { goToPage(currentPageIndex + 1) },
+                    moreContent: { moreMenu }
                 )
 
+                if showFindBar {
+                    FindInNoteBar(
+                        query: $findQuery,
+                        matchCount: matchIDs.count,
+                        currentIndex: matchIndex,
+                        onPrevious: { stepMatch(-1) },
+                        onNext: { stepMatch(1) },
+                        onClose: closeFind
+                    )
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                }
+
                 EditablePageCanvasView(
-                    title: $pageTitle,
-                    blocks: $blocks,
+                    title: pageTitle,
+                    blocks: blocksBinding,
                     selectedBlockID: selectedBlockID,
                     imageContextMenuBlockID: $imageContextMenuBlockID,
+                    isEditable: isEditable,
+                    visibleTypes: visibleTypes,
+                    currentMatchID: currentMatchID,
                     onBeginTextEdit: pushUndo,
                     onTapSpecialBlock: beginEditing,
                     onImageLongPress: { id in
@@ -78,6 +145,25 @@ struct CardDetailView: View {
                         selectedBlockID = nil
                     }
                 )
+                .id(pages[currentPageIndex].id)
+                // Swipe horizontally to change pages (coexists with vertical scroll).
+                .simultaneousGesture(
+                    DragGesture(minimumDistance: 30)
+                        .onEnded { value in
+                            let dx = value.translation.width
+                            let dy = value.translation.height
+                            guard abs(dx) > abs(dy) * 1.5, abs(dx) > 60 else { return }
+                            goToPage(currentPageIndex + (dx < 0 ? 1 : -1))
+                        }
+                )
+                // VoiceOver three-finger swipe to change pages.
+                .accessibilityScrollAction { edge in
+                    switch edge {
+                    case .leading: goToPage(currentPageIndex - 1)
+                    case .trailing: goToPage(currentPageIndex + 1)
+                    default: break
+                    }
+                }
             }
 
             // Tap-to-dismiss layer for the floating menus.
@@ -99,14 +185,121 @@ struct CardDetailView: View {
         .fullScreenCover(item: $voiceNoteSession, onDismiss: { selectedBlockID = nil }) { session in
             voiceNoteScreen(for: session)
         }
+        .sheet(isPresented: $showShareSheet) {
+            if let pdfURL { ActivityView(items: [pdfURL]) }
+        }
+        .sheet(isPresented: $showTypeFilter) {
+            ShowByTypeSheet(
+                visibleTypes: $visibleTypes,
+                onDone: { showTypeFilter = false },
+                onMerge: mergeSelectedIntoOnePage
+            )
+        }
         .onChange(of: imageContextMenuBlockID) { _, newValue in
             if newValue == nil, activeSheet == nil { selectedBlockID = nil }
         }
+        .onChange(of: findQuery) { _, _ in matchIndex = 0 }
+    }
+
+    // MARK: - More actions menu
+
+    @ViewBuilder
+    private var moreMenu: some View {
+        // Scan + Lock share one row (side by side).
+        ControlGroup {
+            Button { scanToPDF() } label: { Label("Scan", systemImage: "doc.viewfinder") }
+            Button { toggleLock() } label: {
+                Label(isLocked ? "Unlock" : "Lock",
+                      systemImage: isLocked ? "lock.open" : "lock")
+            }
+        }
+
+        Button { openFind() } label: { Label("Find in Note", systemImage: "magnifyingglass") }
+
+        Button { showTypeFilter = true } label: {
+            Label("Show by Type", systemImage: "line.3.horizontal.decrease.circle")
+        }
+
+        Menu {
+            Picker("Layout", selection: $layoutMode) {
+                Label("Standard", systemImage: "doc.text").tag(PageLayoutMode.standard)
+                Label("Landscape", systemImage: "rectangle.landscape.rotate").tag(PageLayoutMode.landscape)
+                Label("Read View", systemImage: "book").tag(PageLayoutMode.readView)
+            }
+        } label: {
+            Label("Layout Settings", systemImage: "square.split.2x1")
+        }
+    }
+
+
+    // MARK: - More actions behavior
+
+    private func scanToPDF() {
+        pdfURL = PagePDFRenderer.makePDF(title: currentTitle, blocks: blocks)
+        if pdfURL != nil { showShareSheet = true }
+    }
+
+    private func toggleLock() {
+        closeMenus()
+        if showFindBar { closeFind() }
+        withAnimation { isLocked.toggle() }
+    }
+
+    private func openFind() {
+        matchIndex = 0
+        withAnimation { showFindBar = true }
+    }
+
+    private func closeFind() {
+        findQuery = ""
+        matchIndex = 0
+        withAnimation { showFindBar = false }
+    }
+
+    private func stepMatch(_ direction: Int) {
+        guard !matchIDs.isEmpty else { return }
+        matchIndex = (matchIndex + direction + matchIDs.count) % matchIDs.count
     }
 
     // MARK: - Bottom area (toolbar + floating menu)
 
+    @ViewBuilder
     private var bottomArea: some View {
+        if isEditable {
+            editingToolbarArea
+        } else {
+            statusBanner
+                .padding(.horizontal, 24)
+                .padding(.bottom, 12)
+        }
+    }
+
+    /// Shown instead of the toolbar when the page is locked or in Read View.
+    private var statusBanner: some View {
+        HStack(spacing: 10) {
+            Image(systemName: isLocked ? "lock.fill" : "book.fill")
+            Text(isLocked
+                 ? "Page locked — create a new page to keep writing."
+                 : "Read View — editing is paused.")
+                .font(.footnote)
+                .fontWeight(.medium)
+            Spacer(minLength: 8)
+            if isLocked {
+                Button("New Page") { addPage() }
+                    .font(.footnote.weight(.semibold))
+            } else {
+                Button("Exit") { withAnimation { layoutMode = .standard } }
+                    .font(.footnote.weight(.semibold))
+            }
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 14)
+        .background(.ultraThinMaterial, in: Capsule())
+        .overlay(Capsule().strokeBorder(Color(.separator).opacity(0.4), lineWidth: 0.5))
+        .shadow(color: .black.opacity(0.12), radius: 16, x: 0, y: 8)
+    }
+
+    private var editingToolbarArea: some View {
         VStack(spacing: 12) {
             if isAppearanceMenuPresented {
                 AppearanceMenuView(
@@ -157,7 +350,7 @@ struct CardDetailView: View {
                         showSpecialMenu.toggle()
                     }
                 },
-                onNewPage: {}
+                onNewPage: { addPage() }
             )
         }
         .padding(.bottom, 8)
@@ -194,7 +387,7 @@ struct CardDetailView: View {
             VoiceNoteInputView(
                 mode: .create,
                 initialTitle: "New Recording \(newRecordingCount)",
-                createdAt: Self.nowString,
+                createdAt: DateStamp.now(),
                 durationDetail: "00:00",
                 onCancel: { voiceNoteSession = nil },
                 onSave: { title in saveVoiceNote(session, title: title) }
@@ -214,18 +407,13 @@ struct CardDetailView: View {
                            text: title,
                            duration: "00:12",
                            transcript: "Ini transkrip otomatis dari rekaman tadi. Intinya aku cuma mau nyatet ide ini sebelum keburu lupa.",
-                           createdAt: Self.nowString)
+                           createdAt: DateStamp.now())
             )
             newRecordingCount += 1
         }
         voiceNoteSession = nil
     }
 
-    private static var nowString: String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "d MMM yyyy, HH:mm"
-        return formatter.string(from: Date())
-    }
 
     // MARK: - Special input selection (create flows)
 
@@ -353,7 +541,7 @@ struct CardDetailView: View {
     // MARK: - Undo
 
     private func pushUndo() {
-        let snapshot = PageState(title: pageTitle, blocks: blocks)
+        let snapshot = PageState(title: currentTitle, blocks: blocks)
         // Skip consecutive no-op snapshots (e.g. focusing without typing).
         if undoStack.last?.signature == snapshot.signature { return }
         undoStack.append(snapshot)
@@ -361,9 +549,47 @@ struct CardDetailView: View {
 
     private func undo() {
         guard let previous = undoStack.popLast() else { return }
-        pageTitle = previous.title
+        currentTitle = previous.title
         blocks = previous.blocks
         selectedBlockID = nil
+    }
+
+    // MARK: - Pages
+
+    private func goToPage(_ index: Int) {
+        guard pages.indices.contains(index) else { return }
+        selectedBlockID = nil
+        if showFindBar { closeFind() }
+        withAnimation(.easeInOut(duration: 0.2)) { currentPageIndex = index }
+    }
+
+    /// Creates a new blank page and navigates to it. Undo history resets for
+    /// the fresh page.
+    private func addPage() {
+        closeMenus()
+        pages.append(NotePage(title: "", blocks: []))
+        undoStack.removeAll()
+        goToPage(pages.count - 1)
+    }
+
+    /// Gathers every block of the currently-selected types from all pages into
+    /// one new page, then navigates to it.
+    private func mergeSelectedIntoOnePage() {
+        let selected = visibleTypes
+        let merged = pages.flatMap { page in
+            page.blocks.filter { selected.contains($0.type.filterCategory) }
+        }
+        showTypeFilter = false
+        guard !merged.isEmpty else { return }
+
+        let label = InputBlockType.selectableTypes
+            .filter { selected.contains($0) }
+            .map(\.label)
+            .joined(separator: " + ")
+        pages.append(NotePage(title: "Merged · \(label)", blocks: merged))
+        visibleTypes = Set(InputBlockType.selectableTypes) // show everything on the merged page
+        undoStack.removeAll()
+        goToPage(pages.count - 1)
     }
 
     // MARK: - Dummy data
@@ -378,6 +604,21 @@ struct CardDetailView: View {
 }
 
 // MARK: - Supporting types
+
+/// A single editable page within a card. A card can hold several pages.
+struct NotePage: Identifiable {
+    let id = UUID()
+    var title: String
+    var blocks: [InputBlock]
+    var isLocked: Bool = false
+}
+
+/// Page presentation modes from the Layout Settings submenu.
+enum PageLayoutMode {
+    case standard
+    case landscape
+    case readView
+}
 
 /// Identifies a full-screen voice note session (create when `blockID` is nil).
 struct VoiceNoteSession: Identifiable {
