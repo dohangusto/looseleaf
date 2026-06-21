@@ -3,6 +3,7 @@ import SwiftUI
 /// A clean, rounded expense table embedded in the page.
 /// Two columns: Category and Expense (Rupiah), with an auto-calculated total.
 struct ExpensesTableBlockView: View {
+    @Environment(\.cardVisuals) private var visuals
     let block: InputBlock
 
     var body: some View {
@@ -14,25 +15,27 @@ struct ExpensesTableBlockView: View {
                 Text("Expense (Rupiah)")
                     .frame(width: 130, alignment: .trailing)
             }
-            .font(.subheadline)
-            .fontWeight(.bold)
+            .font(.system(size: visuals.size(15), weight: .bold))
+            .foregroundStyle(visuals.primaryText)
 
             // Rows
             VStack(spacing: 10) {
                 ForEach(block.expenses) { row in
                     HStack(spacing: 12) {
                         Text(row.category)
-                            .font(.subheadline)
+                            .font(.system(size: visuals.size(15)))
+                            .foregroundStyle(visuals.primaryText)
                             .frame(maxWidth: .infinity, alignment: .leading)
 
                         Text(RupiahFormatter.string(row.amount))
-                            .font(.subheadline)
+                            .font(.system(size: visuals.size(15)))
+                            .foregroundStyle(visuals.primaryText)
                             .frame(width: 110, alignment: .trailing)
                             .padding(.vertical, 6)
                             .padding(.horizontal, 12)
                             .background(
                                 RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                    .fill(Color(.systemGray6))
+                                    .fill(visuals.amountBoxBackground)
                             )
                     }
                 }
@@ -43,31 +46,30 @@ struct ExpensesTableBlockView: View {
             // Total
             HStack(spacing: 12) {
                 Text("Total")
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
+                    .font(.system(size: visuals.size(15), weight: .semibold))
+                    .foregroundStyle(visuals.primaryText)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                 Text(RupiahFormatter.string(block.expensesTotal))
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
+                    .font(.system(size: visuals.size(15), weight: .semibold))
                     .foregroundStyle(.white)
                     .frame(width: 110, alignment: .trailing)
                     .padding(.vertical, 6)
                     .padding(.horizontal, 12)
                     .background(
                         RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .fill(Color(.systemGray))
+                            .fill(visuals.totalBoxBackground)
                     )
             }
         }
         .padding(16)
         .background(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(Color(.secondarySystemBackground))
+                .fill(visuals.cardBackground)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .strokeBorder(Color(.separator).opacity(0.5), lineWidth: 0.5)
+                .strokeBorder(visuals.borderColor, lineWidth: visuals.borderWidth)
         )
     }
 }

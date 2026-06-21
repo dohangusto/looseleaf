@@ -26,13 +26,15 @@ struct EditablePageCanvasView: View {
     }
 
     @FocusState private var focusedField: Field?
+    @Environment(\.cardVisuals) private var visuals
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 // Title — always the first row and the strongest element.
                 TextField("Title", text: $title, axis: .vertical)
-                    .font(.largeTitle.bold())
+                    .font(.system(size: visuals.size(34), weight: .bold))
+                    .foregroundStyle(visuals.primaryText)
                     .textInputAutocapitalization(.sentences)
                     .focused($focusedField, equals: .title)
 
@@ -68,7 +70,9 @@ struct EditablePageCanvasView: View {
         case .default, .text:
             // Plain editable text that blends into the page.
             TextField("", text: block.text, axis: .vertical)
-                .font(value.type == .text ? .body.weight(.medium) : .body)
+                .font(.system(size: visuals.size(17),
+                              weight: value.type == .text ? .medium : .regular))
+                .foregroundStyle(visuals.primaryText)
                 .focused($focusedField, equals: .block(value.id))
 
         case .vocabulary:

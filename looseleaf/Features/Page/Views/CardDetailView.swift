@@ -5,26 +5,50 @@ import SwiftUI
 struct CardDetailView: View {
     @Environment(\.dismiss) private var dismiss
 
+    let entry: JournalEntry
+
+    init(entry: JournalEntry) {
+        self.entry = entry
+        _pageTitle = State(initialValue: entry.title)
+        _blocks = State(initialValue: entry.blocks)
+    }
+
     // MARK: State
-    @State private var pageTitle: String = "Car Patrol"
-    @State private var blocks: [InputBlock] = CardDetailView.sampleBlocks
+    @State private var pageTitle: String
+    @State private var blocks: [InputBlock]
     @State private var selectedBlockID: UUID?
     @State private var activeSheet: ActiveSheet?
     @State private var showSpecialMenu = false
     @State private var showAttachmentMenu = false
     @State private var voiceNoteSession: VoiceNoteSession?
+    @State private var newRecordingCount = 1
     @State private var imageContextMenuBlockID: UUID?
     @State private var selectedType: InputBlockType = .default
     @State private var undoStack: [PageState] = []
 
-    private let date = "Monday, 15 June"
-    private let pageIndicator = "1 of 2"
+    // Appearance / accessibility
+    @State private var isAppearanceMenuPresented = false
+    // Shared + persisted so the dark theme carries back to HomeView.
+    @AppStorage("cardDarkModeEnabled") private var isDarkModeEnabled = false
+    @State private var fontScale: CGFloat = 1.0
+    @State private var contrastScale: CGFloat = 1.0
+
+    private var date: String { entry.detailDate }
+    private var pageIndicator: String { "1 of \(entry.pageCount)" }
 
     private var canUndo: Bool { !undoStack.isEmpty }
 
+    private var visuals: CardDetailVisualSettings {
+        CardDetailVisualSettings(
+            isDarkModeEnabled: isDarkModeEnabled,
+            fontScale: fontScale,
+            contrastScale: contrastScale
+        )
+    }
+
     var body: some View {
         ZStack(alignment: .bottom) {
-            Color(.systemBackground)
+            visuals.pageBackground
                 .ignoresSafeArea()
 
             VStack(spacing: 0) {
@@ -57,7 +81,7 @@ struct CardDetailView: View {
             }
 
             // Tap-to-dismiss layer for the floating menus.
-            if showSpecialMenu || showAttachmentMenu {
+            if showSpecialMenu || showAttachmentMenu || isAppearanceMenuPresented {
                 Color.black.opacity(0.001)
                     .ignoresSafeArea()
                     .onTapGesture { closeMenus() }
@@ -65,15 +89,15 @@ struct CardDetailView: View {
 
             bottomArea
         }
+        .environment(\.cardVisuals, visuals)
+        .preferredColorScheme(isDarkModeEnabled ? .dark : .light)
+        .animation(.easeInOut(duration: 0.2), value: isDarkModeEnabled)
         .toolbar(.hidden, for: .navigationBar)
         .sheet(item: $activeSheet, onDismiss: { selectedBlockID = nil }) { sheet in
             editorSheet(for: sheet)
         }
         .fullScreenCover(item: $voiceNoteSession, onDismiss: { selectedBlockID = nil }) { session in
-            VoiceNoteInputView(
-                onCancel: { voiceNoteSession = nil },
-                onSave: { saveVoiceNote(session) }
-            )
+            voiceNoteScreen(for: session)
         }
         .onChange(of: imageContextMenuBlockID) { _, newValue in
             if newValue == nil, activeSheet == nil { selectedBlockID = nil }
@@ -84,6 +108,16 @@ struct CardDetailView: View {
 
     private var bottomArea: some View {
         VStack(spacing: 12) {
+            if isAppearanceMenuPresented {
+                AppearanceMenuView(
+                    isDarkModeEnabled: $isDarkModeEnabled,
+                    fontScale: $fontScale,
+                    contrastScale: $contrastScale,
+                    onCancel: { closeMenus() }
+                )
+                .transition(.scale(scale: 0.9, anchor: .bottom).combined(with: .opacity))
+            }
+
             if showSpecialMenu {
                 SpecialInputMenuView(selectedType: $selectedType) { type in
                     handleSpecialSelection(type)
@@ -102,16 +136,24 @@ struct CardDetailView: View {
             }
 
             BottomToolbarView(
-                onAppearance: {},
+                onAppearance: {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                        showSpecialMenu = false
+                        showAttachmentMenu = false
+                        isAppearanceMenuPresented.toggle()
+                    }
+                },
                 onAttachment: {
                     withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
                         showSpecialMenu = false
+                        isAppearanceMenuPresented = false
                         showAttachmentMenu.toggle()
                     }
                 },
                 onSpecialInput: {
                     withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
                         showAttachmentMenu = false
+                        isAppearanceMenuPresented = false
                         showSpecialMenu.toggle()
                     }
                 },
@@ -126,7 +168,7 @@ struct CardDetailView: View {
     private func insertImage() {
         closeMenus()
         pushUndo()
-        blocks.append(InputBlock(type: .image, imageName: "View 1"))
+        blocks.append(InputBlock(type: .image, imageName: "page-content_1"))
     }
 
     private func recordAudio() {
@@ -134,22 +176,55 @@ struct CardDetailView: View {
         voiceNoteSession = VoiceNoteSession(blockID: nil)
     }
 
-    private func saveVoiceNote(_ session: VoiceNoteSession) {
-        pushUndo()
-        if let id = session.blockID, let index = blocks.firstIndex(where: { $0.id == id }) {
-            // Edit mode — dummy screen has no editable fields, so content is
-            // preserved; the snapshot above still makes the action undoable.
-            blocks[index].createdAt = "Today, 09:41"
+    /// Builds the full-screen voice note view for either a new recording
+    /// (create) or an existing block (edit/detail).
+    @ViewBuilder
+    private func voiceNoteScreen(for session: VoiceNoteSession) -> some View {
+        if let id = session.blockID, let block = blocks.first(where: { $0.id == id }) {
+            VoiceNoteInputView(
+                mode: .edit,
+                initialTitle: block.text,
+                createdAt: block.createdAt,
+                durationDetail: block.duration,
+                transcript: block.transcript,
+                onCancel: { voiceNoteSession = nil },
+                onSave: { title in saveVoiceNote(session, title: title) }
+            )
         } else {
-            blocks.append(
-                InputBlock(type: .voiceNote,
-                           text: "Design Feedback",
-                           duration: "00:01",
-                           transcript: "Oke, kayaknya better kamu ubah komponen ini pake autolayout dulu...",
-                           createdAt: "Today, 09:41")
+            VoiceNoteInputView(
+                mode: .create,
+                initialTitle: "New Recording \(newRecordingCount)",
+                createdAt: Self.nowString,
+                durationDetail: "00:00",
+                onCancel: { voiceNoteSession = nil },
+                onSave: { title in saveVoiceNote(session, title: title) }
             )
         }
+    }
+
+    private func saveVoiceNote(_ session: VoiceNoteSession, title: String) {
+        pushUndo()
+        if let id = session.blockID, let index = blocks.firstIndex(where: { $0.id == id }) {
+            // Edit mode — only the title is editable; transcript/date preserved.
+            blocks[index].text = title
+        } else {
+            // New dummy recording with an AI-style transcript.
+            blocks.append(
+                InputBlock(type: .voiceNote,
+                           text: title,
+                           duration: "00:12",
+                           transcript: "Ini transkrip otomatis dari rekaman tadi. Intinya aku cuma mau nyatet ide ini sebelum keburu lupa.",
+                           createdAt: Self.nowString)
+            )
+            newRecordingCount += 1
+        }
         voiceNoteSession = nil
+    }
+
+    private static var nowString: String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "d MMM yyyy, HH:mm"
+        return formatter.string(from: Date())
     }
 
     // MARK: - Special input selection (create flows)
@@ -164,7 +239,7 @@ struct CardDetailView: View {
         case .image:
             // Dummy insert of the provided asset.
             pushUndo()
-            blocks.append(InputBlock(type: .image, imageName: "View 1"))
+            blocks.append(InputBlock(type: .image, imageName: "page-content_1"))
         case .text:
             pushUndo()
             blocks.append(InputBlock(type: .text, text: "Styled text"))
@@ -178,6 +253,7 @@ struct CardDetailView: View {
         withAnimation(.easeOut(duration: 0.15)) {
             showSpecialMenu = false
             showAttachmentMenu = false
+            isAppearanceMenuPresented = false
         }
     }
 
@@ -299,16 +375,6 @@ struct CardDetailView: View {
         ExpenseRow(category: "kopi", amount: 17000),
     ]
 
-    static let sampleBlocks: [InputBlock] = [
-        InputBlock(type: .default, text: "Put your hands up dawg!"),
-        InputBlock(type: .vocabulary, text: "Komorebi —",
-                   secondaryText: "sunlight filtering through trees"),
-        InputBlock(type: .image, imageName: "View 1"),
-        InputBlock(type: .quote, text: "Mulai dari dirimu sendiri.",
-                   secondaryText: "Tidak ada yang berubah kalau tidak ada yang bergerak"),
-        InputBlock(type: .default,
-                   text: "You’re not behind. You’re just in that part where your brain is trying to negotiate with discomfort. No negotiation today."),
-    ]
 }
 
 // MARK: - Supporting types
@@ -344,6 +410,6 @@ struct PageState {
 
 #Preview {
     NavigationStack {
-        CardDetailView()
+        CardDetailView(entry: .sample)
     }
 }

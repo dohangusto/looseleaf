@@ -3,45 +3,45 @@ import SwiftUI
 /// A compact voice-note attachment card embedded in the page, with a transcript
 /// preview. Styled consistently with the other special blocks.
 struct VoiceNoteBlockView: View {
+    @Environment(\.cardVisuals) private var visuals
     let block: InputBlock
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 10) {
                 Image(systemName: "mic.fill")
-                    .font(.system(size: 15))
-                    .foregroundStyle(.blue)
+                    .font(.system(size: visuals.size(15)))
+                    .foregroundStyle(visuals.accent)
 
                 Text(block.text.isEmpty ? "Voice Note" : block.text)
-                    .font(.body)
-                    .fontWeight(.semibold)
+                    .font(.system(size: visuals.size(17), weight: .semibold))
+                    .foregroundStyle(visuals.primaryText)
 
                 Spacer(minLength: 8)
 
                 HStack(spacing: 4) {
                     Image(systemName: "play.fill")
-                        .font(.system(size: 11))
+                        .font(.system(size: visuals.size(11)))
                     Text("Play")
-                        .font(.subheadline)
+                        .font(.system(size: visuals.size(15)))
                 }
-                .foregroundStyle(.blue)
+                .foregroundStyle(visuals.accent)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)
-                .background(Color.blue.opacity(0.12), in: Capsule())
+                .background(visuals.accent.opacity(0.12), in: Capsule())
             }
 
             VStack(alignment: .leading, spacing: 3) {
                 Text("Transcript")
-                    .font(.caption)
-                    .fontWeight(.bold)
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: visuals.size(12), weight: .bold))
+                    .foregroundStyle(visuals.secondaryText)
 
                 Text(block.transcript.isEmpty
                      ? "No transcript yet."
                      : block.transcript)
-                    .font(.caption)
+                    .font(.system(size: visuals.size(12)))
                     .italic()
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(visuals.secondaryText)
                     .lineLimit(2)
             }
         }
@@ -49,11 +49,11 @@ struct VoiceNoteBlockView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(Color(.secondarySystemBackground))
+                .fill(visuals.cardBackground)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .strokeBorder(Color(.separator).opacity(0.5), lineWidth: 0.5)
+                .strokeBorder(visuals.borderColor, lineWidth: visuals.borderWidth)
         )
     }
 }

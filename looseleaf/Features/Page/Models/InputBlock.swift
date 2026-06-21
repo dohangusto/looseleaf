@@ -59,6 +59,8 @@ struct InputBlock: Identifiable {
     var text: String = ""
     /// Secondary supporting text (vocabulary meaning, quote author/description…).
     var secondaryText: String = ""
+    /// Origin language of a vocabulary word, e.g. "English".
+    var language: String = ""
 
     var imageName: String? = nil
     var duration: String = ""

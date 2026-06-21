@@ -9,7 +9,7 @@ struct ImageBlockView: View {
             .frame(height: 220)
             .frame(maxWidth: .infinity)
             .overlay {
-                Image(block.imageName ?? "View 1")
+                Image(block.imageName ?? "page-content_1")
                     .resizable()
                     .aspectRatio(contentMode: .fill)
             }
@@ -18,6 +18,6 @@ struct ImageBlockView: View {
 }
 
 #Preview {
-    ImageBlockView(block: InputBlock(type: .image, imageName: "View 1"))
+    ImageBlockView(block: InputBlock(type: .image, imageName: "page-content_1"))
         .padding()
 }

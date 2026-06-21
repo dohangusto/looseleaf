@@ -2,6 +2,7 @@ import SwiftUI
 
 struct HomeView: View {
     @State private var viewModel = HomeViewModel()
+    @AppStorage("cardDarkModeEnabled") private var isDarkModeEnabled = false
 
     var body: some View {
         NavigationStack {
@@ -35,10 +36,11 @@ struct HomeView: View {
                     bottomToolbar
                 }
             }
-            .navigationDestination(for: JournalEntry.self) { _ in
-                CardDetailView()
+            .navigationDestination(for: JournalEntry.self) { entry in
+                CardDetailView(entry: entry)
             }
         }
+        .preferredColorScheme(isDarkModeEnabled ? .dark : .light)
     }
 
     // MARK: - Header
@@ -77,7 +79,7 @@ struct HomeView: View {
                 Image(systemName: "line.3.horizontal.decrease")
                     .font(.title2)
                     .fontWeight(.medium)
-                    .foregroundStyle(.black)
+                    .foregroundStyle(.primary)
                     .frame(width: 52, height: 52)
                     .background(.ultraThinMaterial)
                     .clipShape(Circle())
@@ -97,7 +99,7 @@ struct HomeView: View {
                 Image(systemName: "magnifyingglass")
                     .font(.title2)
                     .fontWeight(.medium)
-                    .foregroundStyle(.black)
+                    .foregroundStyle(.primary)
                     .frame(width: 52, height: 52)
                     .background(.ultraThinMaterial)
                     .clipShape(Circle())
@@ -117,7 +119,7 @@ struct HomeView: View {
                 Image(systemName: "square.and.pencil")
                     .font(.title2)
                     .fontWeight(.medium)
-                    .foregroundStyle(.black)
+                    .foregroundStyle(.primary)
                     .frame(width: 52, height: 52)
                     .background(.ultraThinMaterial)
                     .clipShape(Circle())

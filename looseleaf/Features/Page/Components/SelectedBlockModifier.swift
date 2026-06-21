@@ -1,15 +1,17 @@
 import SwiftUI
 
 /// Lifts a special block above the paper when it is selected/being edited,
-/// using a stronger-than-default shadow to communicate active focus.
+/// using a stronger-than-default shadow whose intensity tracks the contrast
+/// setting.
 struct SelectedBlockModifier: ViewModifier {
+    @Environment(\.cardVisuals) private var visuals
     let isSelected: Bool
 
     func body(content: Content) -> some View {
         content
             .shadow(
-                color: .black.opacity(isSelected ? 0.28 : 0.0),
-                radius: isSelected ? 22 : 0,
+                color: .black.opacity(isSelected ? visuals.selectedShadowOpacity : 0.0),
+                radius: isSelected ? visuals.selectedShadowRadius : 0,
                 x: 0,
                 y: isSelected ? 12 : 0
             )

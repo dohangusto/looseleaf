@@ -17,7 +17,7 @@ struct JournalCardView: View {
             ForEach(Array((1...max(stackCount, 1)).reversed()), id: \.self) { level in
                 if level <= stackCount {
                     RoundedRectangle(cornerRadius: cardRadius)
-                        .fill(Color(white: 0.86 - Double(level) * 0.04))
+                        .fill(.ultraThinMaterial)
                         .shadow(color: .black.opacity(0.15), radius: 8, x: 0, y: 6)
                         .rotationEffect(.degrees(Double(level) * 2.5), anchor: .bottom)
                         .offset(y: CGFloat(level) * 9)
@@ -101,7 +101,7 @@ struct JournalCardView: View {
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .frame(height: cardHeight, alignment: .top)
-        .background(.white)
+        .background(.ultraThinMaterial)
         .clipShape(RoundedRectangle(cornerRadius: cardRadius))
         // Broad, soft depth shadow so the card clearly lifts off the background.
         .shadow(color: .black.opacity(0.16), radius: 24, x: 0, y: 16)
