@@ -25,6 +25,10 @@ struct EditablePageCanvasView: View {
     var onImageLongPress: (UUID) -> Void = { _ in }
     var onDeleteImage: (UUID) -> Void = { _ in }
     var onCancelImageMenu: () -> Void = {}
+    var onDeleteBlock: (UUID) -> Void = { _ in }
+    var onMoveBlock: (_ id: UUID, _ up: Bool) -> Void = { _, _ in }
+    /// Tracks the block the cursor last sat in, for inserting new blocks there.
+    @Binding var lastEditedBlockID: UUID?
 
     /// Identifies the currently focused editable field on the page.
     enum Field: Hashable {
@@ -66,6 +70,11 @@ struct EditablePageCanvasView: View {
             .onTapGesture { if isEditable { focusTrailingWritingBlock() } }
             .onChange(of: focusedField) { _, newValue in
                 if newValue != nil { onBeginTextEdit() }
+                switch newValue {
+                case .block(let id): lastEditedBlockID = id
+                case .title: lastEditedBlockID = nil
+                case .none: break // Keep the last anchor when the keyboard dismisses.
+                }
             }
             .onChange(of: currentMatchID) { _, id in
                 guard let id else { return }
@@ -108,22 +117,38 @@ struct EditablePageCanvasView: View {
             VocabularyBlockView(block: value)
                 .selectedBlock(selectedBlockID == value.id)
                 .onTapGesture { if isEditable { onTapSpecialBlock(value) } }
+                .contextMenu { if isEditable { specialBlockMenu(for: value) } }
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(blockAccessibilityLabel(value))
+                .accessibilityHint("Double tap to edit")
 
         case .quote:
             QuoteBlockView(block: value)
                 .selectedBlock(selectedBlockID == value.id)
                 .contentShape(Rectangle())
                 .onTapGesture { if isEditable { onTapSpecialBlock(value) } }
+                .contextMenu { if isEditable { specialBlockMenu(for: value) } }
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(blockAccessibilityLabel(value))
+                .accessibilityHint("Double tap to edit")
 
         case .voiceNote:
             VoiceNoteBlockView(block: value)
                 .selectedBlock(selectedBlockID == value.id)
                 .onTapGesture { if isEditable { onTapSpecialBlock(value) } }
+                .contextMenu { if isEditable { specialBlockMenu(for: value) } }
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(blockAccessibilityLabel(value))
+                .accessibilityHint("Double tap to edit")
 
         case .expenses:
             ExpensesTableBlockView(block: value)
                 .selectedBlock(selectedBlockID == value.id)
                 .onTapGesture { if isEditable { onTapSpecialBlock(value) } }
+                .contextMenu { if isEditable { specialBlockMenu(for: value) } }
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(blockAccessibilityLabel(value))
+                .accessibilityHint("Double tap to edit")
 
         case .image:
             ImageBlockView(block: value)
@@ -131,11 +156,43 @@ struct EditablePageCanvasView: View {
                 .onLongPressGesture { if isEditable { onImageLongPress(value.id) } }
                 .popover(isPresented: imageMenuBinding(for: value.id)) {
                     ImageContextMenuView(
+                        onMoveUp: { onMoveBlock(value.id, true); onCancelImageMenu() },
+                        onMoveDown: { onMoveBlock(value.id, false); onCancelImageMenu() },
                         onDelete: { onDeleteImage(value.id) },
                         onCancel: onCancelImageMenu
                     )
                 }
+                .accessibilityElement()
+                .accessibilityLabel("Image")
+                .accessibilityHint("Long press for options")
         }
+    }
+
+    private func blockAccessibilityLabel(_ block: InputBlock) -> String {
+        switch block.type {
+        case .vocabulary:
+            return "Vocabulary. \(block.text) \(block.secondaryText)"
+        case .quote:
+            return "Quote. \(block.text). \(block.secondaryText)"
+        case .voiceNote:
+            return "Voice note. \(block.text). Transcript: \(block.transcript)"
+        case .expenses:
+            return "Expense table. Total \(RupiahFormatter.string(block.expensesTotal))"
+        case .image:
+            return "Image"
+        default:
+            return block.text
+        }
+    }
+
+    /// Edit / reorder / delete actions for a special block.
+    @ViewBuilder
+    private func specialBlockMenu(for value: InputBlock) -> some View {
+        Button { onTapSpecialBlock(value) } label: { Label("Edit", systemImage: "pencil") }
+        Button { onMoveBlock(value.id, true) } label: { Label("Move Up", systemImage: "arrow.up") }
+        Button { onMoveBlock(value.id, false) } label: { Label("Move Down", systemImage: "arrow.down") }
+        Divider()
+        Button(role: .destructive) { onDeleteBlock(value.id) } label: { Label("Delete", systemImage: "trash") }
     }
 
     private func imageMenuBinding(for id: UUID) -> Binding<Bool> {
@@ -175,6 +232,7 @@ struct EditablePageCanvasView: View {
             InputBlock(type: .vocabulary, text: "Komorebi —", secondaryText: "sunlight filtering through trees"),
         ]),
         selectedBlockID: nil,
-        imageContextMenuBlockID: .constant(nil)
+        imageContextMenuBlockID: .constant(nil),
+        lastEditedBlockID: .constant(nil)
     )
 }

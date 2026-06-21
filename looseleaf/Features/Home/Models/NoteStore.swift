@@ -23,4 +23,12 @@ struct NoteStore {
         guard let data = try? JSONEncoder().encode(entries) else { return }
         try? data.write(to: url, options: .atomic)
     }
+
+    /// Deletes the stored file and returns a freshly seeded set of entries.
+    func reset() -> [JournalEntry] {
+        try? FileManager.default.removeItem(at: url)
+        let seed = DummyJournal.makeEntries()
+        save(seed)
+        return seed
+    }
 }

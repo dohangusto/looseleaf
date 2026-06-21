@@ -2,10 +2,14 @@ import SwiftUI
 
 struct HomeView: View {
     @State private var viewModel = HomeViewModel()
-    @State private var path: [JournalEntry] = []
+    @State private var path = NavigationPath()
+    @State private var pinnedHeight: CGFloat = 0
+    @State private var isPinnedCompact = false
     @State private var isSearching = false
     @State private var pdfURL: URL?
     @State private var showShareSheet = false
+    @State private var showOnboarding = false
+    @AppStorage("hasSeenOnboarding") private var hasSeenOnboarding = false
     @FocusState private var searchFocused: Bool
     @Namespace private var heroNamespace
     @AppStorage("cardDarkModeEnabled") private var isDarkModeEnabled = false
@@ -16,6 +20,10 @@ struct HomeView: View {
 
     private var sortBinding: Binding<SortOrder> {
         Binding(get: { viewModel.sortOrder }, set: { viewModel.sortOrder = $0 })
+    }
+
+    private var filterBinding: Binding<JournalLevel?> {
+        Binding(get: { viewModel.selectedFilter }, set: { viewModel.selectedFilter = $0 })
     }
 
     var body: some View {
@@ -48,11 +56,24 @@ struct HomeView: View {
                 CardDetailView(entry: entry)
                     .zoomDestination(id: entry.id, in: heroNamespace)
             }
+            .navigationDestination(for: CardRoute.self) { route in
+                CardDetailView(entry: route.entry, initialPageIndex: route.pageIndex)
+                    .zoomDestination(id: route.entry.id, in: heroNamespace)
+            }
         }
         .environment(viewModel)
         .preferredColorScheme(isDarkModeEnabled ? .dark : .light)
         .sheet(isPresented: $showShareSheet) {
             if let pdfURL { ActivityView(items: [pdfURL]) }
+        }
+        .sheet(isPresented: $showOnboarding) {
+            OnboardingView {
+                hasSeenOnboarding = true
+                showOnboarding = false
+            }
+        }
+        .onAppear {
+            if !hasSeenOnboarding { showOnboarding = true }
         }
     }
 
@@ -84,26 +105,8 @@ struct HomeView: View {
     @ViewBuilder
     private var content: some View {
         if viewModel.hasResults {
-            VStack(spacing: 0) {
-                // Pinned card stays fixed while the grid scrolls beneath it.
-                if let featured = viewModel.featuredEntry {
-                    NavigationLink(value: featured) {
-                        FeaturedCardView(entry: featured)
-                    }
-                    .buttonStyle(.plain)
-                    .zoomSource(id: featured.id, in: heroNamespace)
-                    .entryContextMenu(
-                        isPinned: featured.isPinned,
-                        onPin: { pin(featured) },
-                        onShare: { share(featured) },
-                        onDuplicate: { duplicate(featured) },
-                        onDelete: { delete(featured) }
-                    )
-                    .padding(.horizontal, 16)
-                    .padding(.top, 12)
-                    .padding(.bottom, 28)
-                }
-
+            // The pinned card floats on top; the grid scrolls behind it.
+            ZStack(alignment: .top) {
                 ScrollView(showsIndicators: false) {
                     VStack(alignment: .leading, spacing: 22) {
                         ForEach(viewModel.gridSections) { section in
@@ -125,8 +128,53 @@ struct HomeView: View {
                         }
                     }
                     .padding(.horizontal, 16)
+                    .padding(.top, viewModel.featuredEntry != nil ? pinnedHeight : 8)
                     .padding(.bottom, 100)
+                    .background(
+                        GeometryReader { geo in
+                            Color.clear.preference(
+                                key: ScrollOffsetKey.self,
+                                value: geo.frame(in: .named("homeScroll")).minY
+                            )
+                        }
+                    )
                 }
+                .coordinateSpace(name: "homeScroll")
+                .scrollCompacts($isPinnedCompact)
+                .onPreferenceChange(ScrollOffsetKey.self) { value in
+                    let compact = value < -8
+                    if compact != isPinnedCompact {
+                        withAnimation(.easeInOut(duration: 0.22)) { isPinnedCompact = compact }
+                    }
+                }
+
+                if let featured = viewModel.featuredEntry {
+                    NavigationLink(value: featured) {
+                        FeaturedCardView(entry: featured, isCompact: isPinnedCompact)
+                    }
+                    .buttonStyle(.plain)
+                    .zoomSource(id: featured.id, in: heroNamespace)
+                    .entryContextMenu(
+                        isPinned: featured.isPinned,
+                        onPin: { pin(featured) },
+                        onShare: { share(featured) },
+                        onDuplicate: { duplicate(featured) },
+                        onDelete: { delete(featured) }
+                    )
+                    .padding(.horizontal, 16)
+                    .padding(.top, 12)
+                    .padding(.bottom, 16)
+                    .background(
+                        GeometryReader { geo in
+                            Color.clear.preference(key: PinnedHeightKey.self, value: geo.size.height)
+                        }
+                    )
+                }
+            }
+            // Keep the inset frozen to the expanded height so the grid doesn't
+            // jump when the pinned card collapses.
+            .onPreferenceChange(PinnedHeightKey.self) { value in
+                if !isPinnedCompact { pinnedHeight = value }
             }
         } else {
             emptyState
@@ -173,29 +221,12 @@ struct HomeView: View {
             Spacer()
 
             Menu {
-                Button {
-                    viewModel.selectedFilter = nil
-                } label: {
-                    if viewModel.selectedFilter == nil {
-                        Label("All", systemImage: "checkmark")
-                    } else {
-                        Text("All")
+                Picker("Mood", selection: filterBinding) {
+                    Text("All").tag(JournalLevel?.none)
+                    ForEach(JournalLevel.allCases) { level in
+                        Text(level.rawValue.capitalized).tag(Optional(level))
                     }
                 }
-
-                ForEach(JournalLevel.allCases) { level in
-                    Button {
-                        viewModel.selectedFilter = level
-                    } label: {
-                        if viewModel.selectedFilter == level {
-                            Label(level.rawValue.capitalized, systemImage: "checkmark")
-                        } else {
-                            Text(level.rawValue.capitalized)
-                        }
-                    }
-                }
-
-                Divider()
 
                 Picker("Sort", selection: sortBinding) {
                     ForEach(SortOrder.allCases) { order in
@@ -312,8 +343,7 @@ struct HomeView: View {
             Spacer()
 
             Button {
-                let entry = viewModel.createEntry()
-                path.append(entry)
+                createOrOpenToday()
             } label: {
                 Image(systemName: "square.and.pencil")
                     .font(.title2)
@@ -330,10 +360,42 @@ struct HomeView: View {
         .padding(.bottom, 16)
     }
 
+    /// Only one card per day: open today's card (at its latest page) if it
+    /// already exists, otherwise create a fresh one.
+    private func createOrOpenToday() {
+        if let today = viewModel.entries.first(where: { $0.isToday }) {
+            path.append(CardRoute(entry: today, pageIndex: max(today.pageCount - 1, 0)))
+        } else {
+            path.append(viewModel.createEntry())
+        }
+    }
+
     private func exitSearch() {
         searchFocused = false
         viewModel.searchQuery = ""
         withAnimation(.easeInOut(duration: 0.2)) { isSearching = false }
+    }
+}
+
+/// Routes to a specific page of a card.
+struct CardRoute: Hashable {
+    let entry: JournalEntry
+    let pageIndex: Int
+}
+
+/// Measures the floating pinned card's height so the grid can inset beneath it.
+private struct PinnedHeightKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
+/// Tracks the grid's scroll offset to collapse/expand the pinned card.
+private struct ScrollOffsetKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
     }
 }
 

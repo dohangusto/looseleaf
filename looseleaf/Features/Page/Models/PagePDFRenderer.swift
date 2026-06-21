@@ -39,7 +39,7 @@ enum PagePDFRenderer {
                      spacing: 18)
 
                 for block in blocks {
-                    if block.type == .image, let name = block.imageName, let image = UIImage(named: name) {
+                    if block.type == .image, let image = uiImage(for: block) {
                         let ratio = image.size.height / max(image.size.width, 1)
                         let height = min(contentWidth * ratio, 300)
                         reserve(height)
@@ -54,6 +54,12 @@ enum PagePDFRenderer {
         } catch {
             return nil
         }
+    }
+
+    private static func uiImage(for block: InputBlock) -> UIImage? {
+        if let data = block.imageData, let image = UIImage(data: data) { return image }
+        if let name = block.imageName { return UIImage(named: name) }
+        return nil
     }
 
     private static func attributed(for block: InputBlock) -> NSAttributedString {

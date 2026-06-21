@@ -156,6 +156,12 @@ class HomeViewModel {
         persist()
     }
 
+    func resetSampleData() {
+        selectedFilter = nil
+        searchQuery = ""
+        entries = store.reset()
+    }
+
     /// Writes edited pages (and the representative title) back to the store.
     func updateEntry(id: UUID, pages: [JournalPage]) {
         guard let index = entries.firstIndex(where: { $0.id == id }) else { return }

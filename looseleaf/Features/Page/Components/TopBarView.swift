@@ -6,10 +6,12 @@ struct TopBarView<MoreContent: View>: View {
     let date: String
     let pageIndicator: String
     var isUndoEnabled: Bool = true
+    var isRedoEnabled: Bool = false
     var canGoPrevious: Bool = false
     var canGoNext: Bool = false
     var onBack: () -> Void = {}
     var onUndo: () -> Void = {}
+    var onRedo: () -> Void = {}
     var onPreviousPage: () -> Void = {}
     var onNextPage: () -> Void = {}
     @ViewBuilder var moreContent: () -> MoreContent
@@ -55,6 +57,7 @@ struct TopBarView<MoreContent: View>: View {
             Spacer()
 
             circleButton("arrow.uturn.backward", action: onUndo, enabled: isUndoEnabled)
+            circleButton("arrow.uturn.forward", action: onRedo, enabled: isRedoEnabled)
 
             Menu {
                 moreContent()

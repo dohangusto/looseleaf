@@ -4,12 +4,19 @@ import SwiftUI
 struct ImageBlockView: View {
     let block: InputBlock
 
+    private var imageContent: Image {
+        if let data = block.imageData, let uiImage = UIImage(data: data) {
+            return Image(uiImage: uiImage)
+        }
+        return Image(block.imageName ?? "page-content_1")
+    }
+
     var body: some View {
         Color.clear
             .frame(height: 220)
             .frame(maxWidth: .infinity)
             .overlay {
-                Image(block.imageName ?? "page-content_1")
+                imageContent
                     .resizable()
                     .aspectRatio(contentMode: .fill)
             }

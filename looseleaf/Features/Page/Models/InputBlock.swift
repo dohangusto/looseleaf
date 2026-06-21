@@ -74,6 +74,8 @@ struct InputBlock: Identifiable, Codable {
     var language: String = ""
 
     var imageName: String? = nil
+    /// Raw image data for user-picked photos (takes precedence over `imageName`).
+    var imageData: Data? = nil
     var duration: String = ""
     var expenses: [ExpenseRow] = []
 

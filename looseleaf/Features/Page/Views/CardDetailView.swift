@@ -1,4 +1,5 @@
 import SwiftUI
+import PhotosUI
 
 /// Detail screen for a selected card — an editable, paper-like note page.
 /// For now every card opens this same screen with the same dummy data.
@@ -8,12 +9,14 @@ struct CardDetailView: View {
 
     let entry: JournalEntry
 
-    init(entry: JournalEntry) {
+    init(entry: JournalEntry, initialPageIndex: Int = 0) {
         self.entry = entry
         // Each card already carries 2+ filled pages.
-        _pages = State(initialValue: entry.pages.map {
-            NotePage(title: $0.title, blocks: $0.blocks)
-        })
+        let initialPages = entry.pages.map { NotePage(title: $0.title, blocks: $0.blocks) }
+        _pages = State(initialValue: initialPages)
+        _currentPageIndex = State(
+            initialValue: min(max(initialPageIndex, 0), max(initialPages.count - 1, 0))
+        )
     }
 
     // MARK: State
@@ -28,6 +31,11 @@ struct CardDetailView: View {
     @State private var imageContextMenuBlockID: UUID?
     @State private var selectedType: InputBlockType = .default
     @State private var undoStack: [PageState] = []
+    @State private var redoStack: [PageState] = []
+    @State private var lastEditedBlockID: UUID?
+    @State private var saveWork: DispatchWorkItem?
+    @State private var showPhotoPicker = false
+    @State private var pickedItem: PhotosPickerItem?
 
     // Appearance / accessibility
     @State private var isAppearanceMenuPresented = false
@@ -50,6 +58,7 @@ struct CardDetailView: View {
     private var pageIndicator: String { "\(currentPageIndex + 1) of \(pages.count)" }
 
     private var canUndo: Bool { !undoStack.isEmpty }
+    private var canRedo: Bool { !redoStack.isEmpty }
 
     // MARK: - Current page proxies
 
@@ -105,10 +114,12 @@ struct CardDetailView: View {
                     date: date,
                     pageIndicator: pageIndicator,
                     isUndoEnabled: canUndo,
+                    isRedoEnabled: canRedo,
                     canGoPrevious: canGoPreviousPage,
                     canGoNext: canGoNextPage,
                     onBack: { dismiss() },
                     onUndo: undo,
+                    onRedo: redo,
                     onPreviousPage: { goToPage(currentPageIndex - 1) },
                     onNextPage: { goToPage(currentPageIndex + 1) },
                     moreContent: { moreMenu }
@@ -144,7 +155,10 @@ struct CardDetailView: View {
                     onCancelImageMenu: {
                         imageContextMenuBlockID = nil
                         selectedBlockID = nil
-                    }
+                    },
+                    onDeleteBlock: deleteBlock,
+                    onMoveBlock: moveBlock,
+                    lastEditedBlockID: $lastEditedBlockID
                 )
                 .id(pages[currentPageIndex].id)
                 // Swipe horizontally to change pages (coexists with vertical scroll).
@@ -196,14 +210,42 @@ struct CardDetailView: View {
                 onMerge: mergeSelectedIntoOnePage
             )
         }
+        .photosPicker(isPresented: $showPhotoPicker, selection: $pickedItem, matching: .images)
+        .onChange(of: pickedItem) { _, item in
+            guard let item else { return }
+            Task {
+                let data = try? await item.loadTransferable(type: Data.self)
+                await MainActor.run {
+                    if let data { insertPickedImage(data) }
+                    pickedItem = nil
+                }
+            }
+        }
         .onChange(of: imageContextMenuBlockID) { _, newValue in
             if newValue == nil, activeSheet == nil { selectedBlockID = nil }
         }
         .onChange(of: findQuery) { _, _ in matchIndex = 0 }
-        .onDisappear { persistBack() }
+        // Autosave: debounced while typing, plus a final save on exit.
+        .onChange(of: contentSignature) { _, _ in scheduleAutosave() }
+        .onDisappear {
+            saveWork?.cancel()
+            persistBack()
+        }
     }
 
-    /// Writes the current pages back to the shared store when leaving the editor.
+    /// Lightweight signature of the current page, used to detect edits.
+    private var contentSignature: String {
+        PageState(title: currentTitle, blocks: blocks).signature
+    }
+
+    private func scheduleAutosave() {
+        saveWork?.cancel()
+        let work = DispatchWorkItem { persistBack() }
+        saveWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8, execute: work)
+    }
+
+    /// Writes the current pages back to the shared store.
     private func persistBack() {
         let journalPages = pages.map { JournalPage(title: $0.title, blocks: $0.blocks) }
         homeModel?.updateEntry(id: entry.id, pages: journalPages)
@@ -328,8 +370,8 @@ struct CardDetailView: View {
 
             if showAttachmentMenu {
                 AttachmentMenuView(
-                    onTakePhoto: { insertImage() },
-                    onChoosePhoto: { insertImage() },
+                    onTakePhoto: { pickPhoto() },
+                    onChoosePhoto: { pickPhoto() },
                     onRecordAudio: { recordAudio() },
                     onCancel: { closeMenus() }
                 )
@@ -366,10 +408,15 @@ struct CardDetailView: View {
 
     // MARK: - Attachment actions
 
-    private func insertImage() {
+    private func pickPhoto() {
         closeMenus()
+        showPhotoPicker = true
+    }
+
+    private func insertPickedImage(_ data: Data) {
         pushUndo()
-        blocks.append(InputBlock(type: .image, imageName: "page-content_1"))
+        insertBlock(InputBlock(type: .image, imageData: data))
+        persistBack()
     }
 
     private func recordAudio() {
@@ -410,7 +457,7 @@ struct CardDetailView: View {
             blocks[index].text = title
         } else {
             // New dummy recording with an AI-style transcript.
-            blocks.append(
+            insertBlock(
                 InputBlock(type: .voiceNote,
                            text: title,
                            duration: "00:12",
@@ -420,6 +467,7 @@ struct CardDetailView: View {
             newRecordingCount += 1
         }
         voiceNoteSession = nil
+        persistBack()
     }
 
 
@@ -435,10 +483,12 @@ struct CardDetailView: View {
         case .image:
             // Dummy insert of the provided asset.
             pushUndo()
-            blocks.append(InputBlock(type: .image, imageName: "page-content_1"))
+            insertBlock(InputBlock(type: .image, imageName: "page-content_1"))
+            persistBack()
         case .text:
             pushUndo()
-            blocks.append(InputBlock(type: .text, text: "Styled text"))
+            insertBlock(InputBlock(type: .text, text: "Styled text"))
+            persistBack()
         case .vocabulary, .quote, .voiceNote, .expenses:
             // Open a creation sheet for these types.
             activeSheet = ActiveSheet(type: type, mode: .create)
@@ -532,18 +582,44 @@ struct CardDetailView: View {
                 edit(&blocks[index])
             }
         case .create:
-            blocks.append(create())
+            insertBlock(create())
         }
         activeSheet = nil
+        persistBack()
     }
 
-    // MARK: - Image deletion
+    // MARK: - Block actions
 
     private func deleteImage(_ id: UUID) {
+        deleteBlock(id)
+        imageContextMenuBlockID = nil
+    }
+
+    private func deleteBlock(_ id: UUID) {
         pushUndo()
         blocks.removeAll { $0.id == id }
-        imageContextMenuBlockID = nil
+        if lastEditedBlockID == id { lastEditedBlockID = nil }
         selectedBlockID = nil
+        persistBack()
+    }
+
+    /// Inserts a new block right after the cursor's block (or at the end).
+    private func insertBlock(_ block: InputBlock) {
+        let anchor = selectedBlockID ?? lastEditedBlockID
+        if let anchor, let index = blocks.firstIndex(where: { $0.id == anchor }) {
+            blocks.insert(block, at: index + 1)
+        } else {
+            blocks.append(block)
+        }
+    }
+
+    private func moveBlock(_ id: UUID, up: Bool) {
+        guard let index = blocks.firstIndex(where: { $0.id == id }) else { return }
+        let target = up ? index - 1 : index + 1
+        guard blocks.indices.contains(target) else { return }
+        pushUndo()
+        blocks.swapAt(index, target)
+        persistBack()
     }
 
     // MARK: - Undo
@@ -553,13 +629,25 @@ struct CardDetailView: View {
         // Skip consecutive no-op snapshots (e.g. focusing without typing).
         if undoStack.last?.signature == snapshot.signature { return }
         undoStack.append(snapshot)
+        redoStack.removeAll() // A new action invalidates the redo history.
     }
 
     private func undo() {
         guard let previous = undoStack.popLast() else { return }
+        redoStack.append(PageState(title: currentTitle, blocks: blocks))
         currentTitle = previous.title
         blocks = previous.blocks
         selectedBlockID = nil
+        persistBack()
+    }
+
+    private func redo() {
+        guard let next = redoStack.popLast() else { return }
+        undoStack.append(PageState(title: currentTitle, blocks: blocks))
+        currentTitle = next.title
+        blocks = next.blocks
+        selectedBlockID = nil
+        persistBack()
     }
 
     // MARK: - Pages
