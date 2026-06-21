@@ -1,10 +1,32 @@
 import SwiftUI
 
+enum SortOrder: String, CaseIterable, Identifiable {
+    case newest, oldest, mood
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .newest: return "Newest first"
+        case .oldest: return "Oldest first"
+        case .mood: return "By mood"
+        }
+    }
+}
+
+/// A titled group of cards (e.g. "Today", "This Week", "Earlier").
+struct EntrySection: Identifiable {
+    let id: String
+    let title: String
+    let entries: [JournalEntry]
+}
+
 @Observable
 class HomeViewModel {
     var entries: [JournalEntry] = []
     var selectedFilter: JournalLevel? = nil
     var searchQuery: String = ""
+    var sortOrder: SortOrder = .newest
+
+    private let store = NoteStore()
 
     var isSearchActive: Bool {
         !searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -26,13 +48,46 @@ class HomeViewModel {
     /// active filter and no search is in progress.
     var featuredEntry: JournalEntry? {
         guard !isSearchActive else { return nil }
-        guard let pinned = entries.first(where: { $0.isToday }) else { return nil }
+        guard let pinned = entries.first(where: { $0.isPinned }) else { return nil }
         if let filter = selectedFilter, pinned.level != filter { return nil }
         return pinned
     }
 
     var gridEntries: [JournalEntry] {
         filteredEntries.filter { $0.id != featuredEntry?.id }
+    }
+
+    /// Grid cards grouped into time buckets, each sorted by `sortOrder`.
+    var gridSections: [EntrySection] {
+        let calendar = Calendar.current
+        let now = Date()
+        var today: [JournalEntry] = []
+        var week: [JournalEntry] = []
+        var earlier: [JournalEntry] = []
+
+        for entry in gridEntries {
+            if calendar.isDateInToday(entry.date) {
+                today.append(entry)
+            } else if let days = calendar.dateComponents([.day], from: entry.date, to: now).day, days < 7 {
+                week.append(entry)
+            } else {
+                earlier.append(entry)
+            }
+        }
+
+        var sections: [EntrySection] = []
+        if !today.isEmpty { sections.append(.init(id: "today", title: "Today", entries: sorted(today))) }
+        if !week.isEmpty { sections.append(.init(id: "week", title: "This Week", entries: sorted(week))) }
+        if !earlier.isEmpty { sections.append(.init(id: "earlier", title: "Earlier", entries: sorted(earlier))) }
+        return sections
+    }
+
+    private func sorted(_ entries: [JournalEntry]) -> [JournalEntry] {
+        switch sortOrder {
+        case .newest: return entries.sorted { $0.date > $1.date }
+        case .oldest: return entries.sorted { $0.date < $1.date }
+        case .mood: return entries.sorted { ($0.level?.rawValue ?? "~") < ($1.level?.rawValue ?? "~") }
+        }
     }
 
     var hasResults: Bool {
@@ -44,7 +99,11 @@ class HomeViewModel {
     }
 
     init() {
-        entries = DummyJournal.makeEntries()
+        entries = store.load()
+    }
+
+    private func persist() {
+        store.save(entries)
     }
 
     /// Creates a new, empty entry dated today and inserts it at the top.
@@ -59,7 +118,52 @@ class HomeViewModel {
             pages: [JournalPage(title: "New Note", blocks: [])]
         )
         entries.insert(entry, at: 0)
+        persist()
         return entry
+    }
+
+    // MARK: - Card actions
+
+    func delete(_ entry: JournalEntry) {
+        entries.removeAll { $0.id == entry.id }
+        persist()
+    }
+
+    /// Pins the given entry (and unpins any other), or unpins it if already pinned.
+    func togglePin(_ entry: JournalEntry) {
+        let willPin = !(entries.first { $0.id == entry.id }?.isPinned ?? false)
+        for index in entries.indices {
+            entries[index].isPinned = willPin && entries[index].id == entry.id
+        }
+        persist()
+    }
+
+    func duplicate(_ entry: JournalEntry) {
+        let copy = JournalEntry(
+            title: entry.title + " copy",
+            date: Date(),
+            level: entry.level,
+            caption: entry.caption,
+            imageName: entry.imageName,
+            pages: entry.pages.map { JournalPage(title: $0.title, blocks: $0.blocks) },
+            isPinned: false
+        )
+        if let index = entries.firstIndex(where: { $0.id == entry.id }) {
+            entries.insert(copy, at: index + 1)
+        } else {
+            entries.append(copy)
+        }
+        persist()
+    }
+
+    /// Writes edited pages (and the representative title) back to the store.
+    func updateEntry(id: UUID, pages: [JournalPage]) {
+        guard let index = entries.firstIndex(where: { $0.id == id }) else { return }
+        entries[index].pages = pages
+        if let firstTitle = pages.first?.title, !firstTitle.isEmpty {
+            entries[index].title = firstTitle
+        }
+        persist()
     }
 }
 
@@ -108,7 +212,8 @@ enum DummyJournal {
                 level: i == 0 ? .reflective : levels[i % levels.count],
                 caption: captions[i],
                 imageName: backgroundImage,
-                pages: pages
+                pages: pages,
+                isPinned: i == 0
             )
         }
     }

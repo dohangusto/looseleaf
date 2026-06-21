@@ -2,7 +2,7 @@ import SwiftUI
 
 /// The kinds of content a page can contain. `default` is normal free-writing;
 /// the rest are special, visually distinct blocks.
-enum InputBlockType: String, CaseIterable, Identifiable {
+enum InputBlockType: String, CaseIterable, Identifiable, Codable {
     case `default`
     case vocabulary
     case quote
@@ -54,16 +54,16 @@ enum InputBlockType: String, CaseIterable, Identifiable {
 }
 
 /// A single expense row inside an `.expenses` block.
-struct ExpenseRow: Identifiable, Hashable {
-    let id = UUID()
+struct ExpenseRow: Identifiable, Hashable, Codable {
+    var id = UUID()
     var category: String
     var amount: Int
 }
 
 /// A content block on the page. Fields are reused across types; only the
 /// relevant ones are populated for a given `type`.
-struct InputBlock: Identifiable {
-    let id = UUID()
+struct InputBlock: Identifiable, Codable {
+    var id = UUID()
     var type: InputBlockType
 
     /// Primary editable text (free text, vocabulary word, quote, voice-note title…).

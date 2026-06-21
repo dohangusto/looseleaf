@@ -4,6 +4,7 @@ import SwiftUI
 /// For now every card opens this same screen with the same dummy data.
 struct CardDetailView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(HomeViewModel.self) private var homeModel: HomeViewModel?
 
     let entry: JournalEntry
 
@@ -199,6 +200,13 @@ struct CardDetailView: View {
             if newValue == nil, activeSheet == nil { selectedBlockID = nil }
         }
         .onChange(of: findQuery) { _, _ in matchIndex = 0 }
+        .onDisappear { persistBack() }
+    }
+
+    /// Writes the current pages back to the shared store when leaving the editor.
+    private func persistBack() {
+        let journalPages = pages.map { JournalPage(title: $0.title, blocks: $0.blocks) }
+        homeModel?.updateEntry(id: entry.id, pages: journalPages)
     }
 
     // MARK: - More actions menu

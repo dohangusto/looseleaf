@@ -4,11 +4,18 @@ struct HomeView: View {
     @State private var viewModel = HomeViewModel()
     @State private var path: [JournalEntry] = []
     @State private var isSearching = false
+    @State private var pdfURL: URL?
+    @State private var showShareSheet = false
     @FocusState private var searchFocused: Bool
+    @Namespace private var heroNamespace
     @AppStorage("cardDarkModeEnabled") private var isDarkModeEnabled = false
 
     private var searchText: Binding<String> {
         Binding(get: { viewModel.searchQuery }, set: { viewModel.searchQuery = $0 })
+    }
+
+    private var sortBinding: Binding<SortOrder> {
+        Binding(get: { viewModel.sortOrder }, set: { viewModel.sortOrder = $0 })
     }
 
     var body: some View {
@@ -39,9 +46,37 @@ struct HomeView: View {
             }
             .navigationDestination(for: JournalEntry.self) { entry in
                 CardDetailView(entry: entry)
+                    .zoomDestination(id: entry.id, in: heroNamespace)
             }
         }
+        .environment(viewModel)
         .preferredColorScheme(isDarkModeEnabled ? .dark : .light)
+        .sheet(isPresented: $showShareSheet) {
+            if let pdfURL { ActivityView(items: [pdfURL]) }
+        }
+    }
+
+    // MARK: - Card actions
+
+    private func pin(_ entry: JournalEntry) {
+        Haptics.tap()
+        viewModel.togglePin(entry)
+    }
+
+    private func duplicate(_ entry: JournalEntry) {
+        Haptics.tap()
+        viewModel.duplicate(entry)
+    }
+
+    private func delete(_ entry: JournalEntry) {
+        Haptics.warning()
+        withAnimation { viewModel.delete(entry) }
+    }
+
+    private func share(_ entry: JournalEntry) {
+        let blocks = entry.pages.flatMap { $0.blocks }
+        pdfURL = PagePDFRenderer.makePDF(title: entry.title, blocks: blocks)
+        if pdfURL != nil { showShareSheet = true }
     }
 
     // MARK: - Content
@@ -56,15 +91,41 @@ struct HomeView: View {
                         FeaturedCardView(entry: featured)
                     }
                     .buttonStyle(.plain)
+                    .zoomSource(id: featured.id, in: heroNamespace)
+                    .entryContextMenu(
+                        isPinned: featured.isPinned,
+                        onPin: { pin(featured) },
+                        onShare: { share(featured) },
+                        onDuplicate: { duplicate(featured) },
+                        onDelete: { delete(featured) }
+                    )
                     .padding(.horizontal, 16)
                     .padding(.top, 12)
                     .padding(.bottom, 28)
                 }
 
                 ScrollView(showsIndicators: false) {
-                    StaggeredGridView(entries: viewModel.gridEntries)
-                        .padding(.horizontal, 16)
-                        .padding(.bottom, 100)
+                    VStack(alignment: .leading, spacing: 22) {
+                        ForEach(viewModel.gridSections) { section in
+                            VStack(alignment: .leading, spacing: 10) {
+                                Text(section.title)
+                                    .font(.headline)
+                                    .foregroundStyle(.secondary)
+                                    .padding(.horizontal, 4)
+
+                                StaggeredGridView(
+                                    entries: section.entries,
+                                    heroNamespace: heroNamespace,
+                                    onPin: pin,
+                                    onShare: share,
+                                    onDuplicate: duplicate,
+                                    onDelete: delete
+                                )
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 100)
                 }
             }
         } else {
@@ -131,6 +192,14 @@ struct HomeView: View {
                         } else {
                             Text(level.rawValue.capitalized)
                         }
+                    }
+                }
+
+                Divider()
+
+                Picker("Sort", selection: sortBinding) {
+                    ForEach(SortOrder.allCases) { order in
+                        Text(order.label).tag(order)
                     }
                 }
             } label: {
@@ -239,13 +308,6 @@ struct HomeView: View {
                     .shadow(color: .black.opacity(0.1), radius: 4, x: 0, y: 2)
             }
             .buttonStyle(.plain)
-
-            Spacer()
-
-            Text("\(viewModel.totalPages)")
-                .font(.footnote)
-                .fontWeight(.medium)
-                .foregroundStyle(.secondary)
 
             Spacer()
 

@@ -1,6 +1,6 @@
 import SwiftUI
 
-enum JournalLevel: String, CaseIterable, Identifiable {
+enum JournalLevel: String, CaseIterable, Identifiable, Codable {
     case easyGoing = "easy going"
     case cheerful = "cheerful"
     case reflective = "reflective"
@@ -28,22 +28,24 @@ enum JournalLevel: String, CaseIterable, Identifiable {
 }
 
 /// One filled page of a card (title + content blocks).
-struct JournalPage: Identifiable {
-    let id = UUID()
+struct JournalPage: Identifiable, Codable {
+    var id = UUID()
     var title: String
     var blocks: [InputBlock]
 }
 
-struct JournalEntry: Identifiable, Hashable {
-    let id = UUID()
-    let title: String
+struct JournalEntry: Identifiable, Hashable, Codable {
+    var id = UUID()
+    var title: String
     let date: Date
     let level: JournalLevel?
     let caption: String
     /// HomeView card background image (`nil` renders a text card).
     let imageName: String?
     /// Rich, filled pages shown in the detail (Page) screen — always 2+.
-    let pages: [JournalPage]
+    var pages: [JournalPage]
+    /// Whether this card is pinned (shown as the featured card).
+    var isPinned: Bool = false
 
     /// Number of pages (drives the stacked-card visual on the Home grid).
     var pageCount: Int { pages.count }
